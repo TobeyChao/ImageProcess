@@ -35,7 +35,7 @@ config = types.GenerateContentConfig(
 ## gemini-2.5-flash-image
 ## gemini-3.1-flash-image-preview
 response = client.models.generate_content(
-    model="gemini-3.1-flash-image-preview",
+    model="gemini-2.5-flash-image",
     contents=[args.prompt],
     config=config
 )

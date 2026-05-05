@@ -21,6 +21,7 @@ Python 3.14。依赖包括 torch、torchvision、transformers、safetensors、pi
   rmbg/                   # BiRefNet 深度学习去背景
   gen-image/              # Gemini 图片生成
   bwdiff/                 # 黑白差分去背景
+  bwgen/                  # 黑白背景图生成（bwdiff 前序，Gemini API）
   game-ui-analyzer/       # 游戏截图 UI 分析（纯 prompt，无脚本）
 local/
   input/                  # 原始图片
@@ -44,6 +45,12 @@ CUDA 可用时自动使用 GPU，否则回退 CPU。输出 RGBA 透明 PNG。模
 python .claude/skills/bwdiff/scripts/bw_diff.py -b <黑底图> -w <白底图> [-o <输出路径>]
 ```
 无需 GPU，仅依赖 pillow + numpy。要求两张图同机位、同光照、同分辨率，仅背景颜色不同。通过逐像素差值反算 alpha 通道。
+
+**黑白背景图生成（Gemini API，bwdiff 前序）：**
+```bash
+python .claude/skills/bwgen/scripts/bw_gen.py -p "<主体描述>" [-r 16:9] [-s 2K]
+```
+从文字描述生成黑白双图，可直接传入 bwdiff 抠图。两步调用 Gemini：先文生图生成黑底图，再图编辑换成白底。输出 `_black.png` 和 `_white.png`。
 
 **图片生成（Gemini API）：**
 ```bash
