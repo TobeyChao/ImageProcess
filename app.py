@@ -353,7 +353,7 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                     rmbg_whitebg = gr.Checkbox(label="白底输出", value=False)
                 rmbg_btn = gr.Button("▶ 开始处理", variant="primary", size="lg")
             with gr.Column(scale=1):
-                rmbg_output = gr.Image(label="结果", type="pil", height=300)
+                rmbg_output = gr.Image(label="结果", type="pil", height=300, format="png", image_mode="RGBA", buttons=["fullscreen"])
                 rmbg_status = gr.Textbox(label="状态", interactive=False)
 
         rmbg_btn.click(
@@ -370,7 +370,7 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
             with gr.Column(scale=1):
                 bwdiff_white = gr.Image(label="白底图", type="pil", height=250)
             with gr.Column(scale=1):
-                bwdiff_result = gr.Image(label="抠图结果", type="pil", height=250)
+                bwdiff_result = gr.Image(label="抠图结果", type="pil", height=250, format="png", image_mode="RGBA", buttons=["fullscreen"])
         with gr.Row():
             bwdiff_btn = gr.Button("▶ 开始处理", variant="primary", size="lg")
         bwdiff_status = gr.Textbox(label="状态", interactive=False)
@@ -402,9 +402,9 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                     )
                 bwgen_btn = gr.Button("▶ 开始生成", variant="primary", size="lg")
             with gr.Column(scale=1):
-                bwgen_black = gr.Image(label="黑底图", type="pil", height=250)
+                bwgen_black = gr.Image(label="黑底图", type="pil", height=250, format="png", buttons=["fullscreen"])
             with gr.Column(scale=1):
-                bwgen_white = gr.Image(label="白底图", type="pil", height=250)
+                bwgen_white = gr.Image(label="白底图", type="pil", height=250, format="png", buttons=["fullscreen"])
         bwgen_status = gr.Textbox(label="状态", interactive=False)
 
         bwgen_btn.click(
@@ -434,7 +434,7 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                     )
                 genimg_btn = gr.Button("▶ 开始生成", variant="primary", size="lg")
             with gr.Column(scale=1):
-                genimg_output = gr.Image(label="生成结果", type="pil", height=350)
+                genimg_output = gr.Image(label="生成结果", type="pil", height=350, format="png", buttons=["fullscreen"])
         genimg_status = gr.Textbox(label="状态", interactive=False)
 
         genimg_btn.click(
@@ -464,11 +464,11 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                     )
                 pipe_btn = gr.Button("▶ 一键执行", variant="primary", size="lg")
             with gr.Column(scale=1):
-                pipe_black = gr.Image(label="黑底图", type="pil", height=200)
+                pipe_black = gr.Image(label="黑底图", type="pil", height=200, format="png", buttons=["fullscreen"])
             with gr.Column(scale=1):
-                pipe_white = gr.Image(label="白底图", type="pil", height=200)
+                pipe_white = gr.Image(label="白底图", type="pil", height=200, format="png", buttons=["fullscreen"])
             with gr.Column(scale=1):
-                pipe_result = gr.Image(label="抠图结果", type="pil", height=200)
+                pipe_result = gr.Image(label="抠图结果", type="pil", height=200, format="png", image_mode="RGBA", buttons=["fullscreen"])
         pipe_status = gr.Textbox(label="状态", interactive=False)
 
         pipe_btn.click(
