@@ -14,10 +14,16 @@
 └── model.safetensors
 ```
 
-## Python 依赖安装
+## 一键安装
 
 ```bash
-pip install torch torchvision transformers safetensors pillow numpy timm kornia
+# 使用项目提供的 requirements.txt 一次性安装所有依赖
+pip install -r requirements.txt
+```
+
+**手动安装各项依赖**：
+```bash
+pip install torch torchvision transformers safetensors pillow numpy timm kornia scipy gradio modelscope
 ```
 
 **可选依赖**（边缘优化，推荐安装）：
@@ -25,7 +31,7 @@ pip install torch torchvision transformers safetensors pillow numpy timm kornia
 pip install scipy
 ```
 
-如需 GPU 加速（推荐），安装支持 CUDA 的 PyTorch：
+如需 GPU 加速（推荐），替换 CUDA 版 PyTorch：
 
 ```bash
 # CUDA 12.x
@@ -34,13 +40,12 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
 ## 模型下载
 
-RMBG-2.0 模型可从 Hugging Face 获取：
+RMBG-2.0 模型可从 ModelScope 获取：
 
 ```bash
-huggingface-cli download briaai/RMBG-2.0 --local-dir "<你的模型目录路径>"
+pip install modelscope
+modelscope download --model AI-ModelScope/RMBG-2.0 --local_dir "<你的模型目录路径>"
 ```
-
-或通过 ComfyUI 的模型管理器安装。
 
 ## 常见问题
 

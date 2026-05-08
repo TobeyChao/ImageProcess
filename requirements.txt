@@ -1,0 +1,13 @@
+torch
+torchvision
+transformers
+safetensors
+pillow
+numpy
+timm
+kornia
+google-genai
+requests
+scipy
+gradio
+modelscope

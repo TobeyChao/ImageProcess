@@ -1,4 +1,3 @@
-import argparse
 import os
 import sys
 
@@ -29,7 +28,37 @@ def compute_alpha(black_img, white_img):
     return alpha, foreground
 
 
-def main():
+def bw_diff(black_path, white_path):
+    """Run black-white difference background removal.
+
+    Args:
+        black_path: path to black-background image
+        white_path: path to white-background image
+
+    Returns:
+        PIL.Image in RGBA mode with computed alpha channel
+
+    Raises:
+        ValueError: if images have different dimensions
+    """
+    black = Image.open(black_path).convert("RGB")
+    white = Image.open(white_path).convert("RGB")
+
+    if black.size != white.size:
+        raise ValueError(f"两张图片尺寸不一致（黑底: {black.size}，白底: {white.size}）")
+
+    black_arr = np.array(black, dtype=np.float32)
+    white_arr = np.array(white, dtype=np.float32)
+
+    alpha, foreground = compute_alpha(black_arr, white_arr)
+
+    result = np.dstack([foreground, alpha])
+    return Image.fromarray(result, "RGBA")
+
+
+if __name__ == "__main__":
+    import argparse
+
     parser = argparse.ArgumentParser(description="黑白差分去背景")
     parser.add_argument("-b", "--black", required=True, help="黑底图路径")
     parser.add_argument("-w", "--white", required=True, help="白底图路径")
@@ -37,14 +66,9 @@ def main():
     args = parser.parse_args()
 
     try:
-        black = Image.open(args.black).convert("RGB")
-        white = Image.open(args.white).convert("RGB")
+        result = bw_diff(args.black, args.white)
     except Exception as e:
-        print(f"错误：无法读取输入图片 - {e}")
-        sys.exit(1)
-
-    if black.size != white.size:
-        print(f"错误：两张图片尺寸不一致（黑底: {black.size}，白底: {white.size}）")
+        print(f"错误：{e}")
         sys.exit(1)
 
     if args.output:
@@ -53,16 +77,5 @@ def main():
         base, _ = os.path.splitext(args.black)
         output_path = base + "_bwdiff.png"
 
-    black_arr = np.array(black, dtype=np.float32)
-    white_arr = np.array(white, dtype=np.float32)
-
-    alpha, foreground = compute_alpha(black_arr, white_arr)
-
-    result = np.dstack([foreground, alpha])
-    result_img = Image.fromarray(result, "RGBA")
-    result_img.save(output_path)
+    result.save(output_path)
     print(f"Saved: {output_path}")
-
-
-if __name__ == "__main__":
-    main()
