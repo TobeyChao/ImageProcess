@@ -317,14 +317,15 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
         gr.Markdown("### 黑白差分去背景（需同机位黑底+白底图）")
         with gr.Row():
             with gr.Column(scale=1):
-                bwdiff_black = gr.Image(label="黑底图", type="pil", height=250)
+                bwdiff_black = gr.Image(label="黑底图", type="pil", height="35vh")
             with gr.Column(scale=1):
-                bwdiff_white = gr.Image(label="白底图", type="pil", height=250)
+                bwdiff_white = gr.Image(label="白底图", type="pil", height="35vh")
             with gr.Column(scale=1):
-                bwdiff_result = gr.Image(label="抠图结果", type="pil", height=250, format="png", image_mode="RGBA", buttons=["fullscreen"])
+                bwdiff_result = gr.Image(label="抠图结果", type="pil", height="35vh",
+                                        format="png", image_mode="RGBA", buttons=["fullscreen"])
         with gr.Row():
             bwdiff_btn = gr.Button("▶ 开始处理", variant="primary", size="lg")
-        bwdiff_status = gr.Textbox(label="状态", interactive=False)
+        bwdiff_status = gr.Textbox(label="状态", interactive=False, lines=1)
 
         bwdiff_btn.click(
             fn=bwdiff_process,
