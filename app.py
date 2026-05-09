@@ -339,25 +339,31 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
             with gr.Column(scale=1):
                 bwgen_prompt = gr.Textbox(
                     label="主体描述",
-                    placeholder="例如：一把发光的剑",
+                    placeholder="例如：一把发光的魔法剑、一只蓬松的白猫",
                     lines=2,
+                    info="描述主体即可，无需提到背景。系统自动添加黑/白背景指令。",
                 )
                 with gr.Row():
                     bwgen_ratio = gr.Dropdown(
                         label="宽高比", choices=RATIO_CHOICES, value="1:1",
+                        info="1:1 通用；16:9 横屏壁纸；9:16 手机壁纸",
                     )
                     bwgen_size = gr.Dropdown(
                         label="分辨率", choices=SIZE_CHOICES, value="1K",
+                        info="1K=1024px；2K=2048px；4K 仅 Wan2.7 支持",
                     )
                     bwgen_model = gr.Dropdown(
                         label="模型", choices=MODEL_CHOICES, value="gemini",
+                        info="Gemini 速度快；Wan2.7 质量更高、支持 4K",
                     )
                 bwgen_btn = gr.Button("▶ 开始生成", variant="primary", size="lg")
             with gr.Column(scale=1):
-                bwgen_black = gr.Image(label="黑底图", type="pil", height=250, format="png", buttons=["fullscreen"])
+                bwgen_black = gr.Image(label="黑底图", type="pil", height="38vh",
+                                      format="png", buttons=["fullscreen"])
             with gr.Column(scale=1):
-                bwgen_white = gr.Image(label="白底图", type="pil", height=250, format="png", buttons=["fullscreen"])
-        bwgen_status = gr.Textbox(label="状态", interactive=False)
+                bwgen_white = gr.Image(label="白底图", type="pil", height="38vh",
+                                      format="png", buttons=["fullscreen"])
+        bwgen_status = gr.Textbox(label="状态", interactive=False, lines=2)
 
         bwgen_btn.click(
             fn=bwgen_generate,
