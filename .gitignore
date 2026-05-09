@@ -11,3 +11,10 @@ local/
 
 # Secrets
 .claude/settings.local.json
+
+# Pytest
+.pytest_cache/
+__pycache__/
+
+# Brainstorming sessions
+.superpowers/
