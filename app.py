@@ -257,6 +257,15 @@ CSS = """
 html { scrollbar-gutter: stable; }
 #title { text-align: center; font-size: 1.8em; font-weight: 700; padding: 0.5em 0; }
 .footer { text-align: center; color: #888; font-size: 0.8em; margin-top: 2em; }
+.alpha-preview img {
+    background-color: #fff;
+    background-image: linear-gradient(45deg, #bbb 25%, transparent 25%),
+                      linear-gradient(-45deg, #bbb 25%, transparent 25%),
+                      linear-gradient(45deg, transparent 75%, #bbb 75%),
+                      linear-gradient(-45deg, transparent 75%, #bbb 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+}
 """
 
 THEME = gr.themes.Ocean(
@@ -370,13 +379,22 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                                                    info="输出白色背景 RGB 图而非透明 PNG，适合直接打印")
             with gr.Column(scale=1):
                 rmbg_output = gr.Image(label="结果", type="pil", height="45vh",
-                                       format="png", image_mode="RGBA", buttons=["fullscreen"])
+                                       format="png", image_mode="RGBA", buttons=["fullscreen"],
+                                       elem_classes=["alpha-preview"])
                 rmbg_status = gr.Textbox(label="状态", interactive=False, lines=1)
+        rmbg_msg_state = gr.State("")
 
         rmbg_btn.click(
+            fn=lambda: "处理中...",
+            outputs=[rmbg_status],
+        ).then(
             fn=rmbg_process,
             inputs=[rmbg_input, rmbg_model_dir, rmbg_threshold, rmbg_edge, rmbg_whitebg],
-            outputs=[rmbg_output, rmbg_status],
+            outputs=[rmbg_output, rmbg_msg_state],
+        ).then(
+            fn=lambda s: s,
+            inputs=[rmbg_msg_state],
+            outputs=[rmbg_status],
         )
 
     with gr.Tab("⬛⬜ 黑白差分"):
@@ -388,7 +406,8 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                 bwdiff_white = gr.Image(label="白底图", type="pil", height="35vh")
             with gr.Column(scale=1):
                 bwdiff_result = gr.Image(label="抠图结果", type="pil", height="35vh",
-                                        format="png", image_mode="RGBA", buttons=["fullscreen"])
+                                        format="png", image_mode="RGBA", buttons=["fullscreen"],
+                                        elem_classes=["alpha-preview"])
         with gr.Row():
             bwdiff_btn = gr.Button("▶ 开始处理", variant="primary", size="lg")
         bwdiff_status = gr.Textbox(label="状态", interactive=False, lines=1)
@@ -516,7 +535,8 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                                      format="png", buttons=["fullscreen"])
             with gr.Column(scale=1):
                 pipe_result = gr.Image(label="抠图结果", type="pil", height="35vh",
-                                      format="png", image_mode="RGBA", buttons=["fullscreen"])
+                                      format="png", image_mode="RGBA", buttons=["fullscreen"],
+                                      elem_classes=["alpha-preview"])
 
         pipe_status = gr.Textbox(label="状态", interactive=False, lines=2)
 
