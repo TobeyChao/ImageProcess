@@ -73,14 +73,29 @@ def settings_status():
 
 def _gpu_status():
     """Return (status_text, install_cmd, show_install) for the settings GPU section."""
-    import subprocess, re, sys
+    import subprocess, re, sys, platform
     try:
         import torch
         cuda_ok = torch.cuda.is_available()
+        mps_ok = (
+            getattr(torch.backends, "mps", None) is not None
+            and torch.backends.mps.is_available()
+        )
         torch_ver = torch.__version__
         gpu_name = torch.cuda.get_device_name(0) if cuda_ok else ""
     except ImportError:
         return "❌ torch 未安装", "", False
+
+    # Apple Silicon path — MPS ships with stock macOS arm64 wheels, no special install
+    if platform.system() == "Darwin" and platform.machine() == "arm64":
+        chip = platform.processor() or "arm64"
+        if mps_ok:
+            return f"✅ Apple Silicon ({chip}) · MPS 已启用 ({torch_ver})", "", False
+        return (
+            f"⚠️ Apple Silicon ({chip}) · MPS 不可用 ({torch_ver})  →  请确认 torch 为 macOS arm64 版本",
+            "",
+            False,
+        )
 
     if not gpu_name:
         try:

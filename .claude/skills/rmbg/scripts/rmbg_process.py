@@ -15,7 +15,12 @@ def load_model(model_dir, device=None):
             raise FileNotFoundError(f"缺少模型文件: {os.path.join(model_dir, f)}")
 
     if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
     if device == "cuda":
         torch.set_float32_matmul_precision('high')
 
@@ -61,7 +66,8 @@ def load_model(model_dir, device=None):
     try:
         model.to(device)
     except RuntimeError as e:
-        if "CUDA" in str(e) or "out of memory" in str(e).lower():
+        msg = str(e).lower()
+        if "cuda" in msg or "mps" in msg or "out of memory" in msg:
             print(f"GPU 不可用，回退到 CPU: {e}")
             device = "cpu"
             model.to(device)
@@ -88,8 +94,9 @@ def process_image(image, model, device, threshold=0.5, edge_refine=True, white_b
         try:
             out = model(inp)
         except RuntimeError as e:
-            if "out of memory" in str(e).lower():
-                print("CUDA OOM, 回退到 CPU...")
+            msg = str(e).lower()
+            if "out of memory" in msg or "mps" in msg:
+                print(f"{device.upper()} 推理失败，回退到 CPU: {e}")
                 model.to("cpu")
                 inp = inp.to("cpu")
                 device = "cpu"
@@ -109,6 +116,12 @@ def process_image(image, model, device, threshold=0.5, edge_refine=True, white_b
         mask_tensor = mask_tensor[0]
 
     mask = mask_tensor.sigmoid().cpu().numpy()
+
+    if device == "mps":
+        try:
+            torch.mps.empty_cache()
+        except (AttributeError, RuntimeError):
+            pass
 
     if edge_refine:
         try:

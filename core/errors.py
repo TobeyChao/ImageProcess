@@ -36,7 +36,7 @@ ERROR_PATTERNS: list[Pattern] = [
      "内容被安全过滤器拦截", "请修改提示词后重试"),
 
     # GPU / model
-    (_has("cuda out of memory", "out of memory"),
+    (_has("cuda out of memory", "out of memory", "mps backend out of memory"),
      "显存不足", "尝试关闭其他占用 GPU 的程序，或在设置中改用 CPU"),
     (_has("model.safetensors", "缺少模型文件"),
      "模型文件缺失", "请先在设置页下载 BiRefNet 模型"),

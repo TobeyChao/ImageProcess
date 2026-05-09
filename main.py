@@ -92,44 +92,72 @@ def check_model():
 
 
 def check_gpu():
-    """Return (has_nvidia, cuda_available, gpu_name, cuda_index_url).
+    """Return dict describing GPU support.
 
-    Detects NVIDIA GPU via nvidia-smi, then checks if the venv torch has CUDA.
-    cuda_index_url is the PyTorch wheel index suffix (e.g. 'cu128').
+    Keys:
+      backend: 'cuda' | 'mps' | 'cpu'
+      has_nvidia (bool), cuda_ok (bool): CUDA path
+      is_apple_silicon (bool), mps_ok (bool): Apple Silicon path
+      name (str): displayable GPU name
+      cuda_index_url (str): PyTorch wheel index suffix for CUDA install
     """
     import re
-    has_nvidia = False
-    gpu_name = ""
-    cuda_index_url = "cu128"
+    import platform
+
+    info = {
+        "backend": "cpu",
+        "has_nvidia": False,
+        "cuda_ok": False,
+        "is_apple_silicon": False,
+        "mps_ok": False,
+        "name": "",
+        "cuda_index_url": "cu128",
+    }
+
+    # Apple Silicon detection (no external tools needed)
+    if platform.system() == "Darwin" and platform.machine() == "arm64":
+        info["is_apple_silicon"] = True
+        info["name"] = f"Apple Silicon ({platform.processor() or 'arm64'})"
+        if VENV_PYTHON.is_file():
+            r = subprocess.run(
+                [str(VENV_PYTHON), "-c",
+                 "import torch; print(torch.backends.mps.is_available())"],
+                capture_output=True, text=True,
+            )
+            info["mps_ok"] = r.stdout.strip() == "True"
+            if info["mps_ok"]:
+                info["backend"] = "mps"
+        return info
+
+    # NVIDIA detection
     try:
         r = subprocess.run(
             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
             capture_output=True, text=True, timeout=5,
         )
         if r.returncode == 0:
-            gpu_name = r.stdout.strip().split("\n")[0].strip()
-            has_nvidia = bool(gpu_name)
-        if has_nvidia:
+            info["name"] = r.stdout.strip().split("\n")[0].strip()
+            info["has_nvidia"] = bool(info["name"])
+        if info["has_nvidia"]:
             r2 = subprocess.run(
                 ["nvidia-smi"], capture_output=True, text=True, timeout=5,
             )
             m = re.search(r"CUDA Version:\s*(\d+)", r2.stdout)
-            if m:
-                major = int(m.group(1))
-                if major < 12:
-                    cuda_index_url = "cu118"
+            if m and int(m.group(1)) < 12:
+                info["cuda_index_url"] = "cu118"
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         pass
 
-    cuda_available = False
-    if has_nvidia and VENV_PYTHON.is_file():
+    if info["has_nvidia"] and VENV_PYTHON.is_file():
         r = subprocess.run(
             [str(VENV_PYTHON), "-c", "import torch; print(torch.cuda.is_available())"],
             capture_output=True, text=True,
         )
-        cuda_available = r.stdout.strip() == "True"
+        info["cuda_ok"] = r.stdout.strip() == "True"
+        if info["cuda_ok"]:
+            info["backend"] = "cuda"
 
-    return has_nvidia, cuda_available, gpu_name, cuda_index_url
+    return info
 
 
 def check_config():
@@ -158,7 +186,7 @@ def full_status():
     missing_deps = check_deps()
     model_ok, model_path = check_model()
     _, has_gemini, has_dashscope = check_config()
-    has_nvidia, cuda_ok, gpu_name, _ = check_gpu()
+    gpu = check_gpu()
     deps_ok = len(missing_deps) == 0
 
     ready = py_ok and venv_ok and deps_ok and model_ok
@@ -169,7 +197,14 @@ def full_status():
         "venv": {"ok": venv_ok, "path": venv_path},
         "deps": {"ok": deps_ok, "missing": missing_deps},
         "model": {"ok": model_ok, "path": model_path},
-        "gpu": {"has_nvidia": has_nvidia, "cuda_ok": cuda_ok, "name": gpu_name},
+        "gpu": {
+            "backend": gpu["backend"],
+            "has_nvidia": gpu["has_nvidia"],
+            "cuda_ok": gpu["cuda_ok"],
+            "is_apple_silicon": gpu["is_apple_silicon"],
+            "mps_ok": gpu["mps_ok"],
+            "name": gpu["name"],
+        },
         "config": {"gemini": has_gemini, "dashscope": has_dashscope},
     }
 
@@ -231,7 +266,7 @@ def download_model(log):
 
 def install_cuda_torch(log):
     """Replace CPU torch with CUDA-enabled build detected from nvidia-smi."""
-    _, _, _, cuda_index_url = check_gpu()
+    cuda_index_url = check_gpu()["cuda_index_url"]
     log("status", f"安装 GPU 版 PyTorch ({cuda_index_url})，约 2-3 GB...")
     index_url = f"https://download.pytorch.org/whl/{cuda_index_url}"
     cmd = [
@@ -613,7 +648,14 @@ function updateUI() {
   // GPU check
   const gpu = status.gpu;
   const gpuBtn = document.getElementById('btn-gpu');
-  if (!gpu.has_nvidia) {
+  if (gpu.is_apple_silicon) {
+    if (gpu.mps_ok) {
+      setCheck('gpu', 'GPU 加速', true, gpu.name + ' · MPS 已启用', 'MPS');
+    } else {
+      setCheck('gpu', 'GPU 加速', true, gpu.name + ' · 等待依赖安装后启用 MPS', 'MPS 待启用');
+    }
+    gpuBtn.style.display = 'none';
+  } else if (!gpu.has_nvidia) {
     setCheck('gpu', 'GPU 加速', true, '无 NVIDIA GPU，使用 CPU 推理', 'CPU');
     gpuBtn.style.display = 'none';
   } else if (gpu.cuda_ok) {
