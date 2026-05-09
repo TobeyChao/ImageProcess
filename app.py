@@ -209,6 +209,18 @@ CSS = """
 .footer { text-align: center; color: #888; font-size: 0.8em; margin-top: 2em; }
 """
 
+THEME = gr.themes.Ocean(
+    primary_hue="indigo",
+    radius_size="md",
+    text_size="md",
+    font=gr.themes.GoogleFont("Inter"),
+    font_mono=gr.themes.GoogleFont("JetBrains Mono"),
+).set(
+    block_shadow="0 1px 3px rgba(0,0,0,0.06)",
+    block_border_width="1px",
+    button_primary_background_fill_hover="*primary_400",
+)
+
 with gr.Blocks(title="Image Processing Toolbox") as app:
     gr.Markdown("# 🖼 Image Processing Toolbox", elem_id="title")
 
@@ -423,4 +435,4 @@ if __name__ == "__main__":
     for sub in ["rmbg", "bwdiff", "bwgen", "gen-image"]:
         os.makedirs(PROJECT_DIR / "local" / "output" / sub, exist_ok=True)
 
-    app.launch(server_name="127.0.0.1", server_port=7861, share=False, css=CSS, theme=gr.themes.Soft())
+    app.launch(server_name="127.0.0.1", server_port=7861, share=False, css=CSS, theme=THEME)
