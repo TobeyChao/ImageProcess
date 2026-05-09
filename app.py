@@ -377,23 +377,28 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
             with gr.Column(scale=1):
                 genimg_prompt = gr.Textbox(
                     label="提示词（英文效果更佳）",
-                    placeholder="例如：a cute orange tabby cat",
+                    placeholder="例如：a glowing magic sword on black background, fantasy art style",
                     lines=2,
+                    info="描述主体、风格、氛围；英文提示词效果通常优于中文。",
                 )
                 with gr.Row():
                     genimg_ratio = gr.Dropdown(
                         label="宽高比", choices=RATIO_CHOICES, value="1:1",
+                        info="1:1 通用；16:9 横屏壁纸；9:16 手机壁纸",
                     )
                     genimg_size = gr.Dropdown(
                         label="分辨率", choices=SIZE_CHOICES, value="1K",
+                        info="1K=1024px；2K=2048px；4K 仅文生图模式支持",
                     )
                     genimg_model = gr.Dropdown(
                         label="模型", choices=MODEL_CHOICES, value="gemini",
+                        info="Gemini 速度快；Wan2.7 质量更高、支持 4K",
                     )
                 genimg_btn = gr.Button("▶ 开始生成", variant="primary", size="lg")
             with gr.Column(scale=1):
-                genimg_output = gr.Image(label="生成结果", type="pil", height=350, format="png", buttons=["fullscreen"])
-        genimg_status = gr.Textbox(label="状态", interactive=False)
+                genimg_output = gr.Image(label="生成结果", type="pil", height="50vh",
+                                        format="png", buttons=["fullscreen"])
+        genimg_status = gr.Textbox(label="状态", interactive=False, lines=2)
 
         genimg_btn.click(
             fn=genimg_generate,
