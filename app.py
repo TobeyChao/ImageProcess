@@ -71,6 +71,55 @@ def settings_status():
     )
 
 
+def _gpu_status():
+    """Return (status_text, install_cmd, show_install) for the settings GPU section."""
+    import subprocess, re, sys
+    try:
+        import torch
+        cuda_ok = torch.cuda.is_available()
+        torch_ver = torch.__version__
+        gpu_name = torch.cuda.get_device_name(0) if cuda_ok else ""
+    except ImportError:
+        return "❌ torch 未安装", "", False
+
+    if not gpu_name:
+        try:
+            r = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode == 0:
+                gpu_name = r.stdout.strip().split("\n")[0].strip()
+        except Exception:
+            pass
+
+    if cuda_ok:
+        return f"✅ {gpu_name} · CUDA 已启用 ({torch_ver})", "", False
+    elif gpu_name:
+        cuda_url = "cu128"
+        try:
+            r = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=5)
+            m = re.search(r"CUDA Version:\s*(\d+)", r.stdout)
+            if m:
+                major = int(m.group(1))
+                if major < 12:
+                    cuda_url = "cu118"
+                elif major < 13:
+                    cuda_url = "cu128"
+        except Exception:
+            pass
+        # Use the venv pip directly — no activation needed, avoids "from versions: none"
+        pip = str(PROJECT_DIR / (".venv/Scripts/pip.exe" if sys.platform == "win32" else ".venv/bin/pip"))
+        cmd = f'{pip} install torch torchvision --force-reinstall --index-url https://download.pytorch.org/whl/{cuda_url}'
+        return (
+            f"⚠️ {gpu_name} · 未启用 CUDA ({torch_ver})  →  退出应用，执行下方命令后重启",
+            cmd,
+            True,
+        )
+    else:
+        return f"💻 未检测到 NVIDIA GPU，使用 CPU 推理 ({torch_ver})", "", False
+
+
 def settings_save(model_dir, gemini_key, dashscope_key):
     cfg = _load_config()
     if model_dir:
@@ -265,6 +314,18 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                 save_btn = gr.Button("💾 保存设置", variant="primary", size="lg")
                 save_status = gr.Textbox(label="状态", interactive=False)
 
+                gr.Markdown("### GPU 加速")
+                init_gpu_st, init_gpu_cmd, init_gpu_vis = _gpu_status()
+                with gr.Row():
+                    gpu_status_box = gr.Textbox(
+                        label="当前状态", value=init_gpu_st, interactive=False, scale=4,
+                    )
+                    gpu_refresh_btn = gr.Button("🔄 刷新", scale=1, size="sm")
+                gpu_install_box = gr.Textbox(
+                    label="安装命令（退出应用后在项目 .venv 中执行，完成后重新启动）",
+                    value=init_gpu_cmd, interactive=False, visible=init_gpu_vis,
+                )
+
             with gr.Column(scale=1):
                 gr.Markdown("""
                 ### 说明
@@ -279,6 +340,10 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
             fn=settings_save,
             inputs=[model_dir_input, gemini_key, dashscope_key],
             outputs=[save_status, gemini_status, dashscope_status],
+        )
+        gpu_refresh_btn.click(
+            fn=lambda: (lambda st, cmd, vis: (st, gr.update(value=cmd, visible=vis)))(*_gpu_status()),
+            outputs=[gpu_status_box, gpu_install_box],
         )
 
     with gr.Tab("🎯 去背景"):

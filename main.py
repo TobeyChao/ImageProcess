@@ -95,12 +95,12 @@ def check_gpu():
     """Return (has_nvidia, cuda_available, gpu_name, cuda_index_url).
 
     Detects NVIDIA GPU via nvidia-smi, then checks if the venv torch has CUDA.
-    cuda_index_url is the PyTorch wheel index suffix (e.g. 'cu124').
+    cuda_index_url is the PyTorch wheel index suffix (e.g. 'cu128').
     """
     import re
     has_nvidia = False
     gpu_name = ""
-    cuda_index_url = "cu124"
+    cuda_index_url = "cu128"
     try:
         r = subprocess.run(
             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
@@ -114,8 +114,10 @@ def check_gpu():
                 ["nvidia-smi"], capture_output=True, text=True, timeout=5,
             )
             m = re.search(r"CUDA Version:\s*(\d+)", r2.stdout)
-            if m and int(m.group(1)) < 12:
-                cuda_index_url = "cu118"
+            if m:
+                major = int(m.group(1))
+                if major < 12:
+                    cuda_index_url = "cu118"
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         pass
 
@@ -234,7 +236,7 @@ def install_cuda_torch(log):
     index_url = f"https://download.pytorch.org/whl/{cuda_index_url}"
     cmd = [
         str(VENV_PYTHON), "-m", "pip", "install",
-        "torch", "torchvision", "--index-url", index_url,
+        "torch", "torchvision", "--force-reinstall", "--index-url", index_url,
     ]
     proc = subprocess.Popen(
         cmd,
