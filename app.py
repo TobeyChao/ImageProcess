@@ -205,6 +205,7 @@ SIZE_CHOICES = ["512", "1K", "2K", "4K"]
 MODEL_CHOICES = ["gemini", "wan"]
 
 CSS = """
+html { overflow-y: scroll; }
 #title { text-align: center; font-size: 1.8em; font-weight: 700; padding: 0.5em 0; }
 .footer { text-align: center; color: #888; font-size: 0.8em; margin-top: 2em; }
 """
