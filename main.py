@@ -41,9 +41,16 @@ MODEL_KEY_FILE = MODEL_DIR / "model.safetensors"
 REQUIRED_DEPS = [
     ("gradio", "gradio"),
     ("torch", "torch"),
+    ("torchvision", "torchvision"),
+    ("transformers", "transformers"),
+    ("safetensors", "safetensors"),
     ("pillow", "PIL"),
     ("numpy", "numpy"),
-    ("google-genai", "google"),
+    ("timm", "timm"),
+    ("kornia", "kornia"),
+    ("google-genai", "google.genai"),
+    ("requests", "requests"),
+    ("scipy", "scipy"),
     ("modelscope", "modelscope"),
 ]
 
@@ -153,15 +160,16 @@ def install_deps(log):
 
 
 def download_model(log):
-    """Download model via modelscope CLI."""
+    """Download model via modelscope SDK."""
     log("status", "Downloading BiRefNet model (~840 MB)...")
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-    cmd = [
-        str(VENV_PYTHON), "-m", "modelscope",
-        "download", "--model", "AI-ModelScope/RMBG-2.0",
-        "--local_dir", str(MODEL_DIR),
-    ]
+    script = (
+        "import sys;"
+        "from modelscope import snapshot_download;"
+        "snapshot_download('AI-ModelScope/RMBG-2.0', local_dir=sys.argv[1], max_workers=4)"
+    )
+    cmd = [str(VENV_PYTHON), "-c", script, str(MODEL_DIR)]
 
     proc = subprocess.Popen(
         cmd,
@@ -169,22 +177,8 @@ def download_model(log):
         text=True, bufsize=1,
     )
     for line in proc.stdout:
-        line = line.rstrip()
+        line = line.strip()
         if line:
-            log("modelscope", line)
-
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1,
-    )
-    for line in proc.stdout:
-        line = line.rstrip()
-        if line.startswith("PROGRESS:"):
-            log("progress", line[9:])
-        elif line.startswith("ERROR:"):
-            log("error", line[6:])
-        elif line:
             log("modelscope", line)
     proc.wait()
     if proc.returncode != 0:
@@ -241,6 +235,8 @@ class SSEHandler(http.server.BaseHTTPRequestHandler):
             self._serve_setup_page()
         elif parsed.path == "/api/status":
             self._send_json(full_status())
+        elif parsed.path == "/api/gradio-ready":
+            self._check_gradio_ready()
         elif parsed.path == "/api/events":
             self._handle_sse()
         else:
@@ -267,6 +263,17 @@ class SSEHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(html)))
         self.end_headers()
         self.wfile.write(html)
+
+    def _check_gradio_ready(self):
+        import socket
+        ready = False
+        try:
+            s = socket.create_connection((HOST, GRADIO_PORT), timeout=1)
+            s.close()
+            ready = True
+        except OSError:
+            pass
+        self._send_json({"ready": ready})
 
     def _handle_sse(self):
         self.send_response(200)
@@ -317,13 +324,13 @@ class SSEHandler(http.server.BaseHTTPRequestHandler):
             SSEHandler.setup_events.finish()
             SSEHandler.setup_events = None
 
-        # The main thread will detect the server stopping and launch Gradio
         threading.Thread(target=_delayed_shutdown, args=(self.server,), daemon=True).start()
 
 
 def _delayed_shutdown(httpd):
     time.sleep(0.5)
     httpd.shutdown()
+    httpd.server_close()
 
 
 # ── Reverse proxy ──────────────────────────────────────────────────────────────
@@ -333,6 +340,28 @@ class ReverseProxyHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         pass
+
+    def do_GET(self):
+        if self.path == "/api/gradio-ready":
+            self._check_gradio_ready()
+        else:
+            self._proxy()
+
+    def _check_gradio_ready(self):
+        import socket
+        ready = False
+        try:
+            s = socket.create_connection((HOST, GRADIO_PORT), timeout=1)
+            s.close()
+            ready = True
+        except OSError:
+            pass
+        body = json.dumps({"ready": ready}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _proxy(self):
         import urllib.request
@@ -348,26 +377,29 @@ class ReverseProxyHandler(http.server.BaseHTTPRequestHandler):
             headers={k: v for k, v in self.headers.items()
                      if k.lower() not in ("host", "connection")}
         )
+        req.add_header("Connection", "close")
 
         try:
-            with urllib.request.urlopen(req, timeout=300) as resp:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read()
                 self.send_response(resp.status)
-                content_type = resp.headers.get("Content-Type", "application/octet-stream")
-                self.send_header("Content-Type", content_type)
-                # Forward other headers
+                skip = {"transfer-encoding", "content-length", "connection"}
                 for key, val in resp.headers.items():
-                    if key.lower() not in ("transfer-encoding",):
+                    if key.lower() not in skip:
                         self.send_header(key, val)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Connection", "close")
                 self.end_headers()
-                self.wfile.write(resp.read())
+                self.wfile.write(data)
         except urllib.error.HTTPError as e:
+            data = e.read() or b""
             self.send_response(e.code)
+            self.send_header("Content-Length", str(len(data)))
             self.end_headers()
-            self.wfile.write(e.read() or b"")
-        except Exception as e:
-            self.send_error(502, str(e))
+            self.wfile.write(data)
+        except Exception:
+            self.send_error(502, "Gradio not ready")
 
-    do_GET = _proxy
     do_POST = _proxy
     do_PUT = _proxy
     do_DELETE = _proxy
@@ -555,8 +587,16 @@ document.getElementById('btn-launch').onclick = async () => {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> 启动中...';
   await fetch('/api/launch', { method: 'POST' });
-  // The page will redirect when Gradio starts
-  setTimeout(() => { window.location.href = '/'; }, 3000);
+  function waitForGradio() {
+    fetch('/api/gradio-ready')
+      .then(r => r.json())
+      .then(data => {
+        if (data.ready) window.location.href = '/';
+        else setTimeout(waitForGradio, 2000);
+      })
+      .catch(() => setTimeout(waitForGradio, 2000));
+  }
+  setTimeout(waitForGradio, 1000);
 };
 
 // Initial check
@@ -572,7 +612,7 @@ refreshStatus();
 
 def run_setup_server():
     """Run the setup HTTP server. Blocks until shutdown()."""
-    server = http.server.HTTPServer((HOST, PORT), SSEHandler)
+    server = http.server.ThreadingHTTPServer((HOST, PORT), SSEHandler)
     print(f"\n  浏览器打开: http://{HOST}:{PORT}")
     print(f"  按 Ctrl+C 停止\n")
     webbrowser.open(f"http://{HOST}:{PORT}")
@@ -588,7 +628,7 @@ def run_gradio_server():
 
 def run_proxy():
     """Start reverse proxy from PORT to GRADIO_PORT."""
-    server = http.server.HTTPServer((HOST, PORT), ReverseProxyHandler)
+    server = http.server.ThreadingHTTPServer((HOST, PORT), ReverseProxyHandler)
 
     def _serve():
         try:
@@ -627,7 +667,7 @@ def main():
         time.sleep(3)
         print(f"  浏览器打开: http://{HOST}:{PORT}\n")
         webbrowser.open(f"http://{HOST}:{PORT}")
-        proxy = http.server.HTTPServer((HOST, PORT), ReverseProxyHandler)
+        proxy = http.server.ThreadingHTTPServer((HOST, PORT), ReverseProxyHandler)
         try:
             proxy.serve_forever()
         except KeyboardInterrupt:
@@ -647,9 +687,8 @@ def main():
     # Phase 3: setup complete, launch Gradio
     print("\n  环境初始化完成，启动应用...\n")
     gradio_proc = run_gradio_server()
-    time.sleep(3)
     proxy = run_proxy()
-    print(f"  Gradio 已启动: http://{HOST}:{PORT}\n")
+    print(f"  Gradio 启动中: http://{HOST}:{PORT}\n")
 
     try:
         gradio_proc.wait()
