@@ -261,11 +261,12 @@ var EYE_OFF='<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"18\" height=\"18\
 
 function addEye(id){
   var el=document.getElementById(id);
-  if(!el) return;
+  if(!el) return false;
   var inp=el.querySelector('input');
-  if(!inp) return;
+  if(!inp) return false;
   var wrap=inp.parentElement;
-  if(!wrap || wrap.querySelector('.pw-eye')) return;
+  if(!wrap) return false;
+  if(wrap.querySelector('.pw-eye')) return true;
   wrap.style.position='relative';
   var btn=document.createElement('button');
   btn.className='pw-eye'; btn.type='button'; btn.innerHTML=EYE;
@@ -275,6 +276,7 @@ function addEye(id){
     else{ inp.type='password'; btn.innerHTML=EYE; btn.classList.remove('active'); }
   };
   wrap.appendChild(btn);
+  return true;
 }
 function init(){
   addEye('gemini-key-input');
@@ -282,9 +284,10 @@ function init(){
 }
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init);
 else init();
-var mo=new MutationObserver(function(){ init(); });
+var mo=new MutationObserver(function(){
+  if(addEye('gemini-key-input') && addEye('dashscope-key-input')) mo.disconnect();
+});
 mo.observe(document.body,{childList:true,subtree:true});
-setTimeout(function(){ mo.disconnect(); }, 8000);
 })();
 </script>
 """
