@@ -43,11 +43,29 @@ local/
     gen-image/
   models/RMBG-2.0/        # BiRefNet 模型文件（model.safetensors、配置、onnx 变体）
   config.json             # UI 设置持久化（API Key、模型路径），gitignored
+core/                     # 纯逻辑模块（无 Gradio 依赖）
+  config.py               # 配置文件读写 + DEFAULTS
+  api_keys.py             # API Key 解析 + use_api_key 上下文管理器
+  errors.py               # 异常 → 中文友好文案
+  skills.py               # skill 脚本懒加载 + 缓存
+  state.py                # ModelRegistry 全局模型单例（线程安全）
+  history.py              # 历史 JSON 读写 + 缩略图
+tests/                    # pytest 单元测试
+  conftest.py             # 共享 fixture
+  test_*.py               # 每个 core 模块对应一个测试文件
 main.py                   # 零依赖启动引导器（环境检测 + 初始化向导）
 app.py                    # Gradio Web UI（6 个功能 Tab）
-requirements.txt          # Python 依赖声明
+requirements.txt          # 运行时依赖
+requirements-dev.txt      # 开发依赖（pytest）
 docs/superpowers/         # 技能开发的计划与设计文档
 ```
+
+## 测试
+
+```bash
+.venv/Scripts/python.exe -m pytest tests/ -v
+```
+覆盖 `core/` 全部纯逻辑模块（config / api_keys / errors / skills / state / history），无需 GPU 或 API Key。
 
 ## 技能脚本
 
