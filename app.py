@@ -284,24 +284,28 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
         gr.Markdown("### BiRefNet 深度学习去背景")
         with gr.Row():
             with gr.Column(scale=1):
-                rmbg_input = gr.Image(label="上传图片", type="pil", height=300)
-                rmbg_model_dir = gr.Textbox(
-                    label="模型目录",
-                    value=initial_cfg.get("model_dir", DEFAULT_MODEL_DIR),
-                )
-                with gr.Row():
+                rmbg_input = gr.Image(label="上传图片", type="pil", height="45vh")
+                rmbg_btn = gr.Button("▶ 开始处理", variant="primary", size="lg")
+                with gr.Accordion("⚙ 高级选项", open=False):
+                    rmbg_model_dir = gr.Textbox(
+                        label="模型目录",
+                        value=initial_cfg.get("model_dir", DEFAULT_MODEL_DIR),
+                        info="BiRefNet 模型文件目录，通常无需修改",
+                    )
                     rmbg_threshold = gr.Slider(
                         label="二值化阈值",
                         minimum=0.3, maximum=0.7, value=0.5, step=0.05,
-                        info="低：保留更多发丝细节 | 高：边缘更干净",
+                        info="0.3–0.4 保留发丝细节；0.5 平衡；0.6–0.7 边缘更干净",
                     )
-                with gr.Row():
-                    rmbg_edge = gr.Checkbox(label="边缘优化", value=True)
-                    rmbg_whitebg = gr.Checkbox(label="白底输出", value=False)
-                rmbg_btn = gr.Button("▶ 开始处理", variant="primary", size="lg")
+                    with gr.Row():
+                        rmbg_edge = gr.Checkbox(label="边缘优化", value=True,
+                                                info="高斯平滑 mask 边缘，去锯齿，处理时间约增加 10%")
+                        rmbg_whitebg = gr.Checkbox(label="白底输出", value=False,
+                                                   info="输出白色背景 RGB 图而非透明 PNG，适合直接打印")
             with gr.Column(scale=1):
-                rmbg_output = gr.Image(label="结果", type="pil", height=300, format="png", image_mode="RGBA", buttons=["fullscreen"])
-                rmbg_status = gr.Textbox(label="状态", interactive=False)
+                rmbg_output = gr.Image(label="结果", type="pil", height="45vh",
+                                       format="png", image_mode="RGBA", buttons=["fullscreen"])
+                rmbg_status = gr.Textbox(label="状态", interactive=False, lines=1)
 
         rmbg_btn.click(
             fn=rmbg_process,
