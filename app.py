@@ -1,10 +1,7 @@
 """Image Processing Toolbox — Gradio Web UI."""
 
-import importlib.util
-import json
 import os
 import sys
-import time
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -14,73 +11,46 @@ import gradio as gr
 warnings.filterwarnings("ignore", category=FutureWarning, module="timm")
 
 PROJECT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(PROJECT_DIR / ".claude"))
+sys.path.insert(0, str(PROJECT_DIR))
 
-# ── Import skill modules ──────────────────────────────────────────────────────
+from core import api_keys, config as cfg_mod, errors, skills, state
 
-
-def _load_module(package, script):
-    path = str(PROJECT_DIR / ".claude" / "skills" / package / "scripts" / f"{script}.py")
-    spec = importlib.util.spec_from_file_location(script, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[script] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-rmbg_mod = _load_module("rmbg", "rmbg_process")
-bwdiff_mod = _load_module("bwdiff", "bw_diff")
-bwgen_mod = _load_module("bwgen", "bw_gen")
-genimg_mod = _load_module("gen-image", "gen_image")
+# Skill modules (lazy-loaded; calling skills.load() the first time loads them)
+rmbg_mod = skills.load("rmbg")
+bwdiff_mod = skills.load("bwdiff")
+bwgen_mod = skills.load("bwgen")
+genimg_mod = skills.load("gen-image")
 
 # ── Config helpers ────────────────────────────────────────────────────────────
 
 CONFIG_PATH = PROJECT_DIR / "local" / "config.json"
 CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-DEFAULT_CONFIG = {
-    "model_dir": str(PROJECT_DIR / "local" / "models" / "RMBG-2.0"),
-    "gemini_api_key": "",
-    "dashscope_api_key": "",
-}
+DEFAULT_MODEL_DIR = str(PROJECT_DIR / "local" / "models" / "RMBG-2.0")
 
 
 def _load_config():
-    if CONFIG_PATH.is_file():
-        try:
-            with open(CONFIG_PATH) as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
+    return cfg_mod.load(CONFIG_PATH)
 
 
-def _save_config(cfg):
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(cfg, f, indent=2)
+def _save_config(data):
+    cfg_mod.save(CONFIG_PATH, data)
 
 
 def get_config_value(key, env_var=None):
-    """Priority: config.json > env var > default."""
-    cfg = _load_config()
-    if key in cfg and cfg[key]:
-        return cfg[key]
-    if env_var and os.environ.get(env_var):
-        return os.environ[env_var]
-    return DEFAULT_CONFIG.get(key, "")
+    return cfg_mod.get_value(CONFIG_PATH, key, env_var=env_var,
+                             default=cfg_mod.DEFAULTS.get(key, ""))
 
 
 # ── Shared state ──────────────────────────────────────────────────────────────
 
-_loaded_model = None
-_loaded_device = None
-
 
 def get_model(model_dir):
-    global _loaded_model, _loaded_device
-    if _loaded_model is None:
-        _loaded_model, _loaded_device = rmbg_mod.load_model(model_dir)
-    return _loaded_model, _loaded_device
+    return state.registry.get_or_load(
+        f"rmbg::{model_dir}",
+        rmbg_mod.load_model,
+        model_dir=model_dir,
+    )
 
 
 def _make_timestamp():
@@ -95,7 +65,7 @@ def settings_status():
     gemini_set = bool(cfg.get("gemini_api_key"))
     dashscope_set = bool(cfg.get("dashscope_api_key"))
     return (
-        cfg.get("model_dir", DEFAULT_CONFIG["model_dir"]),
+        cfg.get("model_dir", DEFAULT_MODEL_DIR),
         "🔑 已配置" if gemini_set else "❌ 未配置",
         "🔑 已配置" if dashscope_set else "❌ 未配置",
     )
@@ -111,7 +81,11 @@ def settings_save(model_dir, gemini_key, dashscope_key):
         cfg["dashscope_api_key"] = dashscope_key.strip()
     _save_config(cfg)
     os.makedirs(os.path.join(PROJECT_DIR, "local", "output"), exist_ok=True)
-    return "设置已保存 ✓", "🔑 已配置" if (cfg.get("gemini_api_key") or gemini_key.strip()) else "❌ 未配置", "🔑 已配置" if (cfg.get("dashscope_api_key") or dashscope_key.strip()) else "❌ 未配置"
+    return (
+        "设置已保存 ✓",
+        "🔑 已配置" if (cfg.get("gemini_api_key") or gemini_key.strip()) else "❌ 未配置",
+        "🔑 已配置" if (cfg.get("dashscope_api_key") or dashscope_key.strip()) else "❌ 未配置",
+    )
 
 
 # ── Tab 2: Background Removal (rmbg) ──────────────────────────────────────────
@@ -129,43 +103,31 @@ def rmbg_process(image, model_dir, threshold, edge_refine, white_bg):
                                         white_bg=white_bg)
         return result, "处理完成 ✓"
     except Exception as e:
-        return None, f"错误: {e}"
+        msg, hint = errors.user_message(e)
+        return None, f"{msg}\n{hint}"
 
 
 # ── Tab 3: Black-White Diff (bwdiff) ──────────────────────────────────────────
 
-_TMP_BLACK = None
-_TMP_WHITE = None
 
-
-def bwdiff_cache_black(img):
-    global _TMP_BLACK
-    _TMP_BLACK = img
-    return None, None
-
-
-def bwdiff_cache_white(img):
-    global _TMP_WHITE
-    _TMP_WHITE = img
-    return None, None
-
-
-def bwdiff_process():
-    if _TMP_BLACK is None or _TMP_WHITE is None:
+def bwdiff_process(black, white):
+    """Take both PIL inputs directly (no module-level state)."""
+    if black is None or white is None:
         return None, "请上传黑底图和白底图"
-    if _TMP_BLACK.size != _TMP_WHITE.size:
-        return None, f"两张图片尺寸不一致（黑底: {_TMP_BLACK.size}，白底: {_TMP_WHITE.size}）"
+    if black.size != white.size:
+        return None, f"两张图片尺寸不一致（黑底: {black.size}，白底: {white.size}）"
     try:
         import numpy as np
         from PIL import Image
 
-        black_arr = np.array(_TMP_BLACK.convert("RGB"), dtype=np.float32)
-        white_arr = np.array(_TMP_WHITE.convert("RGB"), dtype=np.float32)
+        black_arr = np.array(black.convert("RGB"), dtype=np.float32)
+        white_arr = np.array(white.convert("RGB"), dtype=np.float32)
         alpha, fg = bwdiff_mod.compute_alpha(black_arr, white_arr)
         result = np.dstack([fg, alpha])
         return Image.fromarray(result, "RGBA"), "处理完成 ✓"
     except Exception as e:
-        return None, f"错误: {e}"
+        msg, hint = errors.user_message(e)
+        return None, f"{msg}\n{hint}"
 
 
 # ── Tab 4: Black-White Generate (bwgen) ───────────────────────────────────────
@@ -174,28 +136,20 @@ def bwgen_generate(prompt, ratio, size, model):
     if not prompt or not prompt.strip():
         return None, None, "请输入主体描述"
 
-    # Resolve API key from config
-    api_key = None
-    if model == "wan":
-        key = get_config_value("dashscope_api_key", "DASHSCOPE_API_KEY")
-        if not key:
-            return None, None, "未配置 DashScope API Key，请在设置中填写"
-        os.environ["DASHSCOPE_API_KEY"] = key
-    else:
-        key = get_config_value("gemini_api_key", "GEMINI_API_KEY")
-        if not key:
-            return None, None, "未配置 Gemini API Key，请在设置中填写"
-        os.environ["GEMINI_API_KEY"] = key
-
     out_dir = str(PROJECT_DIR / "local" / "output" / "bwgen")
     try:
-        black_path, white_path = bwgen_mod.generate_black_white(
-            prompt.strip(), ratio, size, out_dir, model
-        )
+        with api_keys.use_api_key(CONFIG_PATH, model):
+            black_path, white_path = bwgen_mod.generate_black_white(
+                prompt.strip(), ratio, size, out_dir, model
+            )
         from PIL import Image
-        return Image.open(black_path), Image.open(white_path), f"生成完成 ✓\n黑底: {black_path}\n白底: {white_path}"
+        return (Image.open(black_path), Image.open(white_path),
+                f"生成完成 ✓\n黑底: {black_path}\n白底: {white_path}")
+    except api_keys.MissingKey as e:
+        return None, None, str(e)
     except Exception as e:
-        return None, None, f"错误: {e}"
+        msg, hint = errors.user_message(e)
+        return None, None, f"{msg}\n{hint}"
 
 
 # ── Tab 5: Image Generate (gen-image) ────────────────────────────────────────
@@ -204,24 +158,17 @@ def genimg_generate(prompt, ratio, size, model):
     if not prompt or not prompt.strip():
         return None, "请输入图像描述"
 
-    if model == "wan":
-        key = get_config_value("dashscope_api_key", "DASHSCOPE_API_KEY")
-        if not key:
-            return None, "未配置 DashScope API Key，请在设置中填写"
-        os.environ["DASHSCOPE_API_KEY"] = key
-    else:
-        key = get_config_value("gemini_api_key", "GEMINI_API_KEY")
-        if not key:
-            return None, "未配置 Gemini API Key，请在设置中填写"
-        os.environ["GEMINI_API_KEY"] = key
-
     out_dir = str(PROJECT_DIR / "local" / "output" / "gen-image")
     try:
-        filepath = genimg_mod.generate_image(prompt.strip(), ratio, size, out_dir, model)
+        with api_keys.use_api_key(CONFIG_PATH, model):
+            filepath = genimg_mod.generate_image(prompt.strip(), ratio, size, out_dir, model)
         from PIL import Image
         return Image.open(filepath), f"生成完成 ✓\n{filepath}"
+    except api_keys.MissingKey as e:
+        return None, str(e)
     except Exception as e:
-        return None, f"错误: {e}"
+        msg, hint = errors.user_message(e)
+        return None, f"{msg}\n{hint}"
 
 
 # ── Tab 6: Pipeline (bwgen → bwdiff) ─────────────────────────────────────────
@@ -230,37 +177,25 @@ def pipeline_run(prompt, ratio, size, model):
     if not prompt or not prompt.strip():
         return None, None, None, "请输入主体描述"
 
-    # Set API key
-    if model == "wan":
-        key = get_config_value("dashscope_api_key", "DASHSCOPE_API_KEY")
-        if not key:
-            return None, None, None, "未配置 DashScope API Key"
-        os.environ["DASHSCOPE_API_KEY"] = key
-    else:
-        key = get_config_value("gemini_api_key", "GEMINI_API_KEY")
-        if not key:
-            return None, None, None, "未配置 Gemini API Key"
-        os.environ["GEMINI_API_KEY"] = key
-
     out_dir = str(PROJECT_DIR / "local" / "output" / "bwgen")
     try:
-        black_path, white_path = bwgen_mod.generate_black_white(
-            prompt.strip(), ratio, size, out_dir, model
-        )
+        # Step 1: generate black + white background pair (reuses bwgen module)
+        with api_keys.use_api_key(CONFIG_PATH, model):
+            black_path, white_path = bwgen_mod.generate_black_white(
+                prompt.strip(), ratio, size, out_dir, model
+            )
+
+        # Step 2: diff to RGBA (reuses bwdiff module — no code duplication)
+        result = bwdiff_mod.bw_diff(black_path, white_path)
+
         from PIL import Image
-        black_img = Image.open(black_path)
-        white_img = Image.open(white_path)
-
-        # bwdiff
-        import numpy as np
-        black_arr = np.array(black_img.convert("RGB"), dtype=np.float32)
-        white_arr = np.array(white_img.convert("RGB"), dtype=np.float32)
-        alpha, fg = bwdiff_mod.compute_alpha(black_arr, white_arr)
-        result = Image.fromarray(np.dstack([fg, alpha]), "RGBA")
-
-        return black_img, white_img, result, f"管线完成 ✓\n{black_path}\n{white_path}"
+        return (Image.open(black_path), Image.open(white_path), result,
+                f"管线完成 ✓\n{black_path}\n{white_path}")
+    except api_keys.MissingKey as e:
+        return None, None, None, str(e)
     except Exception as e:
-        return None, None, None, f"错误: {e}"
+        msg, hint = errors.user_message(e)
+        return None, None, None, f"{msg}\n{hint}"
 
 
 # ── Build UI ──────────────────────────────────────────────────────────────────
@@ -311,7 +246,7 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                 gr.Markdown("### 模型路径")
                 model_dir_input = gr.Textbox(
                     label="模型目录",
-                    value=initial_cfg.get("model_dir", DEFAULT_CONFIG["model_dir"]),
+                    value=initial_cfg.get("model_dir", DEFAULT_MODEL_DIR),
                     placeholder="BiRefNet 模型目录路径",
                 )
                 save_btn = gr.Button("💾 保存设置", variant="primary", size="lg")
@@ -340,7 +275,7 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                 rmbg_input = gr.Image(label="上传图片", type="pil", height=300)
                 rmbg_model_dir = gr.Textbox(
                     label="模型目录",
-                    value=initial_cfg.get("model_dir", DEFAULT_CONFIG["model_dir"]),
+                    value=initial_cfg.get("model_dir", DEFAULT_MODEL_DIR),
                 )
                 with gr.Row():
                     rmbg_threshold = gr.Slider(
@@ -375,10 +310,10 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
             bwdiff_btn = gr.Button("▶ 开始处理", variant="primary", size="lg")
         bwdiff_status = gr.Textbox(label="状态", interactive=False)
 
-        bwdiff_black.upload(fn=bwdiff_cache_black, inputs=[bwdiff_black], outputs=[])
-        bwdiff_white.upload(fn=bwdiff_cache_white, inputs=[bwdiff_white], outputs=[])
         bwdiff_btn.click(
-            fn=bwdiff_process, inputs=[], outputs=[bwdiff_result, bwdiff_status]
+            fn=bwdiff_process,
+            inputs=[bwdiff_black, bwdiff_white],
+            outputs=[bwdiff_result, bwdiff_status],
         )
 
     with gr.Tab("🎨 生黑白底图"):
