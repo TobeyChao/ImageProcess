@@ -253,6 +253,42 @@ RATIO_CHOICES = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "4:5", "5:4"
 SIZE_CHOICES = ["512", "1K", "2K", "4K"]
 MODEL_CHOICES = ["gemini", "wan"]
 
+EYE_TOGGLE_JS = """
+<script>
+(function(){
+var EYE='<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/></svg>';
+var EYE_OFF='<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24\"/><line x1=\"1\" y1=\"1\" x2=\"23\" y2=\"23\"/></svg>';
+
+function addEye(id){
+  var el=document.getElementById(id);
+  if(!el) return;
+  var inp=el.querySelector('input');
+  if(!inp) return;
+  var wrap=inp.parentElement;
+  if(!wrap || wrap.querySelector('.pw-eye')) return;
+  wrap.style.position='relative';
+  var btn=document.createElement('button');
+  btn.className='pw-eye'; btn.type='button'; btn.innerHTML=EYE;
+  btn.onclick=function(e){
+    e.preventDefault(); e.stopPropagation();
+    if(inp.type==='password'){ inp.type='text'; btn.innerHTML=EYE_OFF; btn.classList.add('active'); }
+    else{ inp.type='password'; btn.innerHTML=EYE; btn.classList.remove('active'); }
+  };
+  wrap.appendChild(btn);
+}
+function init(){
+  addEye('gemini-key-input');
+  addEye('dashscope-key-input');
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init);
+else init();
+var mo=new MutationObserver(function(){ init(); });
+mo.observe(document.body,{childList:true,subtree:true});
+setTimeout(function(){ mo.disconnect(); }, 8000);
+})();
+</script>
+"""
+
 CSS = """
 html { scrollbar-gutter: stable; }
 #title { text-align: center; font-size: 1.8em; font-weight: 700; padding: 0.5em 0; }
@@ -266,6 +302,16 @@ html { scrollbar-gutter: stable; }
     background-size: 16px 16px;
     background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
 }
+#gemini-key-input input, #dashscope-key-input input { padding-right: 32px !important; }
+.pw-eye {
+    position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+    width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+    background: transparent; border: none; cursor: pointer;
+    color: inherit; opacity: 0.4; z-index: 10;
+    border-radius: 4px; padding: 0;
+}
+.pw-eye:hover { opacity: 0.7; }
+.pw-eye.active { opacity: 0.7; }
 """
 
 THEME = gr.themes.Ocean(
@@ -281,7 +327,7 @@ THEME = gr.themes.Ocean(
 )
 
 with gr.Blocks(title="Image Processing Toolbox") as app:
-    gr.Markdown("# 🖼 Image Processing Toolbox", elem_id="title")
+    gr.Markdown("# 🔧 Image Processing Toolbox", elem_id="title")
 
     # Load initial config
     initial_cfg = _load_config()
@@ -297,8 +343,10 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                     gemini_key = gr.Textbox(
                         label="Gemini API Key",
                         type="password",
-                        placeholder="输入新的 API Key（留空不修改）",
+                        value=initial_cfg.get("gemini_api_key", ""),
+                        placeholder="输入 API Key",
                         scale=3,
+                        elem_id="gemini-key-input",
                     )
                     gemini_status = gr.Textbox(
                         label="状态", value=init_gemini_st, interactive=False, scale=1,
@@ -307,8 +355,10 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                     dashscope_key = gr.Textbox(
                         label="DashScope API Key",
                         type="password",
-                        placeholder="输入新的 API Key（留空不修改）",
+                        value=initial_cfg.get("dashscope_api_key", ""),
+                        placeholder="输入 API Key",
                         scale=3,
+                        elem_id="dashscope-key-input",
                     )
                     dashscope_status = gr.Textbox(
                         label="状态", value=init_dash_st, interactive=False, scale=1,
@@ -341,7 +391,8 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                 - **Gemini API Key**: 用于 Gemini 图片生成（gen-image、bwgen）
                 - **DashScope API Key**: 用于阿里云百炼 Wan2.7 Pro 图片生成
                 - **模型目录**: BiRefNet 深度学习去背景模型所在目录
-                - API Key 已配置时显示「🔑 已配置」，无需重复填写
+                - 已配置的 Key 会自动填入（密码遮罩），点击 👁 可查看明文
+                - 输入新 Key 即可替换，留空不修改已有配置
                 - 配置保存到 `local/config.json`，下次自动加载
                 """)
 
@@ -456,7 +507,7 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
             outputs=[bwgen_black, bwgen_white, bwgen_status],
         )
 
-    with gr.Tab("🖼 生图"):
+    with gr.Tab("📷 生图"):
         gr.Markdown("### AI 图片生成")
         with gr.Row():
             with gr.Column(scale=1):
@@ -557,4 +608,4 @@ if __name__ == "__main__":
     for sub in ["rmbg", "bwdiff", "bwgen", "gen-image"]:
         os.makedirs(PROJECT_DIR / "local" / "output" / sub, exist_ok=True)
 
-    app.launch(server_name="127.0.0.1", server_port=7861, share=False, css=CSS, theme=THEME)
+    app.launch(server_name="127.0.0.1", server_port=7861, share=False, css=CSS, theme=THEME, head=EYE_TOGGLE_JS)
