@@ -91,6 +91,45 @@ def check_model():
     return ok, str(MODEL_DIR)
 
 
+def check_gpu():
+    """Return (has_nvidia, cuda_available, gpu_name, cuda_index_url).
+
+    Detects NVIDIA GPU via nvidia-smi, then checks if the venv torch has CUDA.
+    cuda_index_url is the PyTorch wheel index suffix (e.g. 'cu124').
+    """
+    import re
+    has_nvidia = False
+    gpu_name = ""
+    cuda_index_url = "cu124"
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            gpu_name = r.stdout.strip().split("\n")[0].strip()
+            has_nvidia = bool(gpu_name)
+        if has_nvidia:
+            r2 = subprocess.run(
+                ["nvidia-smi"], capture_output=True, text=True, timeout=5,
+            )
+            m = re.search(r"CUDA Version:\s*(\d+)", r2.stdout)
+            if m and int(m.group(1)) < 12:
+                cuda_index_url = "cu118"
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+
+    cuda_available = False
+    if has_nvidia and VENV_PYTHON.is_file():
+        r = subprocess.run(
+            [str(VENV_PYTHON), "-c", "import torch; print(torch.cuda.is_available())"],
+            capture_output=True, text=True,
+        )
+        cuda_available = r.stdout.strip() == "True"
+
+    return has_nvidia, cuda_available, gpu_name, cuda_index_url
+
+
 def check_config():
     """Return (ok, has_gemini, has_dashscope)."""
     config_path = PROJECT_DIR / "local" / "config.json"
@@ -117,6 +156,7 @@ def full_status():
     missing_deps = check_deps()
     model_ok, model_path = check_model()
     _, has_gemini, has_dashscope = check_config()
+    has_nvidia, cuda_ok, gpu_name, _ = check_gpu()
     deps_ok = len(missing_deps) == 0
 
     ready = py_ok and venv_ok and deps_ok and model_ok
@@ -127,6 +167,7 @@ def full_status():
         "venv": {"ok": venv_ok, "path": venv_path},
         "deps": {"ok": deps_ok, "missing": missing_deps},
         "model": {"ok": model_ok, "path": model_path},
+        "gpu": {"has_nvidia": has_nvidia, "cuda_ok": cuda_ok, "name": gpu_name},
         "config": {"gemini": has_gemini, "dashscope": has_dashscope},
     }
 
@@ -184,6 +225,30 @@ def download_model(log):
     if proc.returncode != 0:
         raise RuntimeError(f"Model download failed (exit code {proc.returncode})")
     log("ok", "Model downloaded")
+
+
+def install_cuda_torch(log):
+    """Replace CPU torch with CUDA-enabled build detected from nvidia-smi."""
+    _, _, _, cuda_index_url = check_gpu()
+    log("status", f"安装 GPU 版 PyTorch ({cuda_index_url})，约 2-3 GB...")
+    index_url = f"https://download.pytorch.org/whl/{cuda_index_url}"
+    cmd = [
+        str(VENV_PYTHON), "-m", "pip", "install",
+        "torch", "torchvision", "--index-url", index_url,
+    ]
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+    )
+    for line in proc.stdout:
+        line = line.rstrip()
+        if line:
+            log("pip", line)
+    proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError(f"GPU PyTorch 安装失败 (exit {proc.returncode})")
+    log("ok", "GPU 版 PyTorch 安装完成，重启应用后生效")
 
 
 # ── SSE event stream ───────────────────────────────────────────────────────────
@@ -249,6 +314,8 @@ class SSEHandler(http.server.BaseHTTPRequestHandler):
             self._run_setup_step(create_venv)
         elif parsed.path == "/api/setup/install-deps":
             self._run_setup_step(install_deps)
+        elif parsed.path == "/api/setup/install-cuda-torch":
+            self._run_setup_step(install_cuda_torch)
         elif parsed.path == "/api/setup/download-model":
             self._run_setup_step(download_model)
         elif parsed.path == "/api/launch":
@@ -492,6 +559,7 @@ SETUP_HTML = """<!DOCTYPE html>
     <div class="check-item"><span class="icon" id="icon-venv">⏳</span><span class="name">虚拟环境</span><span class="status" id="st-venv">检测中...</span></div>
     <div class="check-item"><span class="icon" id="icon-deps">⏳</span><span class="name">依赖</span><span class="status" id="st-deps">检测中...</span></div>
     <div class="check-item"><span class="icon" id="icon-model">⏳</span><span class="name">模型</span><span class="status" id="st-model">检测中...</span></div>
+    <div class="check-item"><span class="icon" id="icon-gpu">⏳</span><span class="name">GPU 加速</span><span class="status" id="st-gpu">检测中...</span></div>
   </div>
 
   <div id="all-ready" style="display:none">
@@ -504,6 +572,7 @@ SETUP_HTML = """<!DOCTYPE html>
   <div class="buttons">
     <button id="btn-venv" class="btn-primary" disabled>创建虚拟环境</button>
     <button id="btn-deps" class="btn-primary" disabled>安装依赖</button>
+    <button id="btn-gpu" class="btn-secondary" disabled style="display:none">安装 GPU 支持</button>
     <button id="btn-model" class="btn-primary" disabled>下载模型</button>
     <button id="btn-launch" class="btn-launch" disabled>启动应用</button>
   </div>
@@ -538,6 +607,21 @@ function updateUI() {
            status.deps.ok ? 'OK' : `${status.deps.missing.length} 个缺失`);
   setCheck('model', '模型', status.model.ok, status.model.ok ? '已下载' : '未下载 (840MB)',
            status.model.ok ? 'OK' : '未下载');
+
+  // GPU check
+  const gpu = status.gpu;
+  const gpuBtn = document.getElementById('btn-gpu');
+  if (!gpu.has_nvidia) {
+    setCheck('gpu', 'GPU 加速', true, '无 NVIDIA GPU，使用 CPU 推理', 'CPU');
+    gpuBtn.style.display = 'none';
+  } else if (gpu.cuda_ok) {
+    setCheck('gpu', 'GPU 加速', true, gpu.name + ' · CUDA 已启用', 'CUDA');
+    gpuBtn.style.display = 'none';
+  } else {
+    setCheck('gpu', 'GPU 加速', false, gpu.name + ' · 未启用 CUDA，建议安装 GPU 支持', '未启用');
+    gpuBtn.style.display = '';
+    gpuBtn.disabled = !status.deps.ok;
+  }
 
   document.getElementById('btn-venv').disabled = status.venv.ok;
   document.getElementById('btn-deps').disabled = !status.venv.ok || status.deps.ok;
@@ -609,6 +693,7 @@ async function runStep(btnId, url, label) {
 
 document.getElementById('btn-venv').onclick = () => runStep('btn-venv', '/api/setup/create-venv', '创建虚拟环境');
 document.getElementById('btn-deps').onclick = () => runStep('btn-deps', '/api/setup/install-deps', '安装依赖');
+document.getElementById('btn-gpu').onclick = () => runStep('btn-gpu', '/api/setup/install-cuda-torch', '安装 GPU 支持');
 document.getElementById('btn-model').onclick = () => runStep('btn-model', '/api/setup/download-model', '下载模型');
 document.getElementById('btn-launch').onclick = async () => {
   const btn = document.getElementById('btn-launch');
