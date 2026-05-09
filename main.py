@@ -398,7 +398,35 @@ class ReverseProxyHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
         except Exception:
-            self.send_error(502, "Gradio not ready")
+            self._serve_starting_page()
+
+    def _serve_starting_page(self):
+        """Friendly 'starting up' HTML with auto-refresh, instead of bare 502."""
+        body = (
+            b'<!DOCTYPE html><html lang="zh-CN"><head>'
+            b'<meta charset="UTF-8"><title>\xe5\x90\xaf\xe5\x8a\xa8\xe4\xb8\xad...</title>'
+            b'<meta http-equiv="refresh" content="2">'
+            b'<style>body{font-family:-apple-system,sans-serif;background:#1a1a2e;'
+            b'color:#e0e0e0;min-height:100vh;display:flex;align-items:center;'
+            b'justify-content:center;flex-direction:column;gap:16px}'
+            b'.spinner{width:36px;height:36px;border:3px solid #333;'
+            b'border-top:3px solid #6366f1;border-radius:50%;'
+            b'animation:spin 0.8s linear infinite}'
+            b'@keyframes spin{to{transform:rotate(360deg)}}'
+            b'p{color:#888;font-size:13px}</style>'
+            b'</head><body>'
+            b'<div class="spinner"></div>'
+            b'<p>Gradio \xe5\x90\xaf\xe5\x8a\xa8\xe4\xb8\xad\xef\xbc\x8c'
+            b'\xe9\xa1\xb5\xe9\x9d\xa2\xe5\xb0\x86\xe5\x9c\xa8 2 \xe7\xa7\x92'
+            b'\xe5\x90\x8e\xe8\x87\xaa\xe5\x8a\xa8\xe5\x88\xb7\xe6\x96\xb0...</p>'
+            b'</body></html>'
+        )
+        self.send_response(503)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Retry-After", "2")
+        self.end_headers()
+        self.wfile.write(body)
 
     do_POST = _proxy
     do_PUT = _proxy
@@ -640,6 +668,20 @@ def run_proxy():
     return server
 
 
+def wait_for_gradio(timeout: float = 60.0, interval: float = 0.3) -> bool:
+    """Poll GRADIO_PORT until something accepts a connection. Returns True if ready."""
+    import socket
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            s = socket.create_connection((HOST, GRADIO_PORT), timeout=0.5)
+            s.close()
+            return True
+        except OSError:
+            time.sleep(interval)
+    return False
+
+
 def main():
     print("╔══════════════════════════════════════════╗")
     print("║   Image Processing Toolbox              ║")
@@ -663,8 +705,11 @@ def main():
         print(f"\n  环境就绪，启动应用...\n")
         # Start Gradio directly and proxy
         gradio_proc = run_gradio_server()
-        print(f"  Gradio 启动中...")
-        time.sleep(3)
+        print(f"  等待 Gradio 监听 {HOST}:{GRADIO_PORT} ...", end="", flush=True)
+        if wait_for_gradio(timeout=60.0):
+            print(" ✓")
+        else:
+            print(" ⚠ 超时（60s），仍尝试打开浏览器（首次访问可能看到「启动中」页面）")
         print(f"  浏览器打开: http://{HOST}:{PORT}\n")
         webbrowser.open(f"http://{HOST}:{PORT}")
         proxy = http.server.ThreadingHTTPServer((HOST, PORT), ReverseProxyHandler)

@@ -17,11 +17,20 @@ python main.py
 ## 虚拟环境
 
 ```bash
-source .venv/bin/activate
+source .venv/bin/activate          # macOS/Linux
+.venv\Scripts\Activate.ps1         # Windows PowerShell
 pip install -r requirements.txt
+pip install -r requirements-dev.txt  # 开发用（pytest）
 ```
 
-Python 3.14。依赖包括 torch、torchvision、transformers、safetensors、pillow、numpy、timm、kornia、google-genai、requests、scipy、gradio、modelscope。
+Python ≥ 3.10。运行依赖包括 torch、torchvision、transformers、safetensors、pillow、numpy、timm、kornia、google-genai、requests、scipy、gradio、modelscope。
+
+## 测试
+
+```bash
+pytest tests/ -v
+```
+覆盖 `core/` 全部纯逻辑模块（config / api_keys / errors / skills / state / history），无需 GPU 或 API Key。
 
 ## 目录结构
 
@@ -53,19 +62,12 @@ core/                     # 纯逻辑模块（无 Gradio 依赖）
 tests/                    # pytest 单元测试
   conftest.py             # 共享 fixture
   test_*.py               # 每个 core 模块对应一个测试文件
-main.py                   # 零依赖启动引导器（环境检测 + 初始化向导）
+main.py                   # 零依赖启动引导器（环境检测 + 初始化向导 + 反向代理）
 app.py                    # Gradio Web UI（6 个功能 Tab）
 requirements.txt          # 运行时依赖
 requirements-dev.txt      # 开发依赖（pytest）
-docs/superpowers/         # 技能开发的计划与设计文档
+docs/superpowers/         # 设计与实施计划文档
 ```
-
-## 测试
-
-```bash
-.venv/Scripts/python.exe -m pytest tests/ -v
-```
-覆盖 `core/` 全部纯逻辑模块（config / api_keys / errors / skills / state / history），无需 GPU 或 API Key。
 
 ## 技能脚本
 
