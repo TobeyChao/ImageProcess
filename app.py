@@ -408,31 +408,51 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
 
     with gr.Tab("🔄 一键管线"):
         gr.Markdown("### bwgen → bwdiff 一键抠图")
+
         with gr.Row():
-            with gr.Column(scale=1):
+            with gr.Column(scale=2):
                 pipe_prompt = gr.Textbox(
                     label="主体描述",
                     placeholder="例如：一把发光的剑",
                     lines=2,
+                    info="描述主体即可，系统自动生成黑底图和白底图后完成抠图。",
                 )
                 with gr.Row():
                     pipe_ratio = gr.Dropdown(
                         label="宽高比", choices=RATIO_CHOICES, value="1:1",
+                        info="1:1 通用；16:9 横屏壁纸；9:16 手机壁纸",
                     )
                     pipe_size = gr.Dropdown(
                         label="分辨率", choices=SIZE_CHOICES, value="1K",
+                        info="1K=1024px；2K=2048px；4K 仅 Wan2.7 支持",
                     )
                     pipe_model = gr.Dropdown(
                         label="模型", choices=MODEL_CHOICES, value="gemini",
+                        info="Gemini 速度快；Wan2.7 质量更高、支持 4K",
                     )
                 pipe_btn = gr.Button("▶ 一键执行", variant="primary", size="lg")
             with gr.Column(scale=1):
-                pipe_black = gr.Image(label="黑底图", type="pil", height=200, format="png", buttons=["fullscreen"])
+                gr.Markdown("""
+**流程说明**
+1. 根据描述生成黑底 + 白底图（bwgen）
+2. 黑白差分计算 alpha 通道（bwdiff）
+3. 输出带透明通道的 PNG
+
+适合：快速从文字描述得到带透明背景的素材。
+""")
+
+        with gr.Row():
             with gr.Column(scale=1):
-                pipe_white = gr.Image(label="白底图", type="pil", height=200, format="png", buttons=["fullscreen"])
+                pipe_black = gr.Image(label="黑底图", type="pil", height="35vh",
+                                     format="png", buttons=["fullscreen"])
             with gr.Column(scale=1):
-                pipe_result = gr.Image(label="抠图结果", type="pil", height=200, format="png", image_mode="RGBA", buttons=["fullscreen"])
-        pipe_status = gr.Textbox(label="状态", interactive=False)
+                pipe_white = gr.Image(label="白底图", type="pil", height="35vh",
+                                     format="png", buttons=["fullscreen"])
+            with gr.Column(scale=1):
+                pipe_result = gr.Image(label="抠图结果", type="pil", height="35vh",
+                                      format="png", image_mode="RGBA", buttons=["fullscreen"])
+
+        pipe_status = gr.Textbox(label="状态", interactive=False, lines=2)
 
         pipe_btn.click(
             fn=pipeline_run,
