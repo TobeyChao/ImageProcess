@@ -28,6 +28,13 @@ def test_load_unknown_skill_raises():
 
 
 def test_all_known_skills_loadable():
-    for name in ["rmbg", "bwdiff", "bwgen", "gen-image"]:
+    for name in ["rmbg", "bwdiff", "chroma-key", "bwgen", "gen-image"]:
         mod = skills.load(name)
         assert mod is not None
+
+
+def test_chroma_key_has_expected_functions():
+    mod = skills.load("chroma-key")
+    assert hasattr(mod, "chroma_key_remove")
+    assert hasattr(mod, "auto_detect_color")
+    assert hasattr(mod, "parse_hex_color")
