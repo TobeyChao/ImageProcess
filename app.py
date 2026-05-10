@@ -71,12 +71,40 @@ def settings_status():
     )
 
 
+def _amd_windows_cmd(amd_name, torch_ver, pip):
+    """Build Windows AMD ROCm install message with direct wheel URLs."""
+    ver = "7.2.1"
+    base = f"https://repo.radeon.com/rocm/windows/rocm-rel-{ver}"
+    sdk = " ".join([
+        f"{base}/rocm_sdk_core-{ver}-py3-none-win_amd64.whl",
+        f"{base}/rocm_sdk_devel-{ver}-py3-none-win_amd64.whl",
+        f"{base}/rocm_sdk_libraries_custom-{ver}-py3-none-win_amd64.whl",
+        f"{base}/rocm-{ver}.tar.gz",
+    ])
+    torch = " ".join([
+        f"{base}/torch-2.9.1%2Brocm{ver}-cp312-cp312-win_amd64.whl",
+        f"{base}/torchvision-0.24.1%2Brocm{ver}-cp312-cp312-win_amd64.whl",
+    ])
+    cmd = (
+        f"REM Step 1: Install ROCm SDK\n"
+        f"{pip} install --no-cache-dir {sdk}\n"
+        f"REM Step 2: Install PyTorch ROCm wheels\n"
+        f"{pip} install --no-cache-dir {torch}"
+    )
+    return (
+        f"⚠️ {amd_name} · 未启用 ROCm ({torch_ver})  →  退出应用，在 CMD 中依次执行下方命令后重启",
+        cmd,
+        True,
+    )
+
+
 def _gpu_status():
     """Return (status_text, install_cmd, show_install) for the settings GPU section."""
     import subprocess, re, sys, platform
     try:
         import torch
         cuda_ok = torch.cuda.is_available()
+        is_rocm = bool(getattr(torch.version, "hip", None))
         mps_ok = (
             getattr(torch.backends, "mps", None) is not None
             and torch.backends.mps.is_available()
@@ -85,6 +113,8 @@ def _gpu_status():
         gpu_name = torch.cuda.get_device_name(0) if cuda_ok else ""
     except ImportError:
         return "❌ torch 未安装", "", False
+
+    pip = str(PROJECT_DIR / (".venv/Scripts/pip.exe" if sys.platform == "win32" else ".venv/bin/pip"))
 
     # Apple Silicon path — MPS ships with stock macOS arm64 wheels, no special install
     if platform.system() == "Darwin" and platform.machine() == "arm64":
@@ -97,42 +127,85 @@ def _gpu_status():
             False,
         )
 
-    if not gpu_name:
-        try:
-            r = subprocess.run(
-                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if r.returncode == 0:
-                gpu_name = r.stdout.strip().split("\n")[0].strip()
-        except Exception:
-            pass
+    # ROCm wheel installed and working
+    if cuda_ok and is_rocm:
+        return f"✅ {gpu_name or 'AMD GPU'} · ROCm 已启用 ({torch_ver})", "", False
 
+    # NVIDIA + CUDA wheel working
     if cuda_ok:
         return f"✅ {gpu_name} · CUDA 已启用 ({torch_ver})", "", False
-    elif gpu_name:
+
+    # No torch GPU yet — probe for hardware to recommend a wheel
+    nvidia_name = ""
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            nvidia_name = r.stdout.strip().split("\n")[0].strip()
+    except Exception:
+        pass
+
+    if nvidia_name:
         cuda_url = "cu128"
         try:
             r = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=5)
             m = re.search(r"CUDA Version:\s*(\d+)", r.stdout)
-            if m:
-                major = int(m.group(1))
-                if major < 12:
-                    cuda_url = "cu118"
-                elif major < 13:
-                    cuda_url = "cu128"
+            if m and int(m.group(1)) < 12:
+                cuda_url = "cu118"
         except Exception:
             pass
-        # Use the venv pip directly — no activation needed, avoids "from versions: none"
-        pip = str(PROJECT_DIR / (".venv/Scripts/pip.exe" if sys.platform == "win32" else ".venv/bin/pip"))
         cmd = f'{pip} install torch torchvision --force-reinstall --index-url https://download.pytorch.org/whl/{cuda_url}'
         return (
-            f"⚠️ {gpu_name} · 未启用 CUDA ({torch_ver})  →  退出应用，执行下方命令后重启",
+            f"⚠️ {nvidia_name} · 未启用 CUDA ({torch_ver})  →  退出应用，执行下方命令后重启",
             cmd,
             True,
         )
-    else:
-        return f"💻 未检测到 NVIDIA GPU，使用 CPU 推理 ({torch_ver})", "", False
+
+    # AMD detection (Windows uses Get-CimInstance, Linux uses lspci)
+    amd_name = ""
+    if platform.system() == "Windows":
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "(Get-CimInstance Win32_VideoController | "
+                 "Where-Object { $_.Name -match 'AMD|Radeon' } | "
+                 "Select-Object -First 1).Name"],
+                capture_output=True, text=True, timeout=5,
+            )
+            amd_name = r.stdout.strip()
+        except Exception:
+            pass
+    elif platform.system() == "Linux":
+        try:
+            r = subprocess.run(["lspci"], capture_output=True, text=True, timeout=5)
+            for line in r.stdout.splitlines():
+                low = line.lower()
+                if ("vga" in low or "display" in low) and ("amd" in low or "radeon" in low):
+                    amd_name = line.split(":", 2)[-1].strip() if line.count(":") >= 2 else line.strip()
+                    break
+        except Exception:
+            pass
+
+    if amd_name:
+        if platform.system() == "Windows":
+            if sys.version_info[:2] != (3, 12):
+                return (
+                    f"⚠️ {amd_name} · Windows ROCm 需要 Python 3.12（当前 {sys.version_info[0]}.{sys.version_info[1]}）({torch_ver})",
+                    "",
+                    False,
+                )
+            return _amd_windows_cmd(amd_name, torch_ver, pip)
+        rocm_url = "rocm6.4"
+        cmd = f'{pip} install torch torchvision --force-reinstall --index-url https://download.pytorch.org/whl/{rocm_url}'
+        return (
+            f"⚠️ {amd_name} · 未启用 ROCm ({torch_ver})  →  退出应用，执行下方命令后重启（实验性）",
+            cmd,
+            True,
+        )
+
+    return f"💻 未检测到独立 GPU，使用 CPU 推理 ({torch_ver})", "", False
 
 
 def settings_save(model_dir, gemini_key, dashscope_key):

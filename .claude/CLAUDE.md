@@ -12,7 +12,7 @@
 python main.py
 ```
 
-零依赖启动（仅需 Python ≥ 3.10），自动打开浏览器进入环境初始化向导。首次使用按提示一键安装依赖和下载模型，之后直接进入功能界面。
+零依赖启动（仅需 Python ≥ 3.10；Windows AMD ROCm GPU 加速需 Python 3.12），自动打开浏览器进入环境初始化向导。首次使用按提示一键安装依赖和下载模型，之后直接进入功能界面。
 
 ## 虚拟环境
 
@@ -74,7 +74,7 @@ tests/                    # pytest 单元测试（每个 core 模块一个 test_
 ```bash
 python .claude/skills/rmbg/scripts/rmbg_process.py -i <输入图片> -m local/models/RMBG-2.0 [-o <输出路径>]
 ```
-CUDA 可用时自动使用 GPU，否则回退 CPU。输出 RGBA 透明 PNG。模型内部以 1024×1024 推理，mask 自动缩放回原图尺寸。
+CUDA / ROCm 可用时自动使用 GPU，否则回退 CPU。输出 RGBA 透明 PNG。模型内部以 1024×1024 推理，mask 自动缩放回原图尺寸。
 
 **去背景（黑白差分，无需模型）：**
 ```bash

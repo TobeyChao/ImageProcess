@@ -27,6 +27,24 @@ HOST = "127.0.0.1"
 PORT = 7860
 GRADIO_PORT = 7861
 
+# ROCm on Windows wheel URLs (Python 3.12 required; distinct from Linux rocm index)
+ROCM_WIN_VERSION = "7.2.1"
+ROCM_WIN_TORCH_VER = "2.9.1"
+ROCM_WIN_TORCHVISION_VER = "0.24.1"
+ROCM_WIN_TORCHAUDIO_VER = "2.9.1"
+ROCM_WIN_BASE_URL = f"https://repo.radeon.com/rocm/windows/rocm-rel-{ROCM_WIN_VERSION}"
+ROCM_WIN_SDK_WHEELS = [
+    f"{ROCM_WIN_BASE_URL}/rocm_sdk_core-{ROCM_WIN_VERSION}-py3-none-win_amd64.whl",
+    f"{ROCM_WIN_BASE_URL}/rocm_sdk_devel-{ROCM_WIN_VERSION}-py3-none-win_amd64.whl",
+    f"{ROCM_WIN_BASE_URL}/rocm_sdk_libraries_custom-{ROCM_WIN_VERSION}-py3-none-win_amd64.whl",
+    f"{ROCM_WIN_BASE_URL}/rocm-{ROCM_WIN_VERSION}.tar.gz",
+]
+ROCM_WIN_TORCH_WHEELS = [
+    f"{ROCM_WIN_BASE_URL}/torch-{ROCM_WIN_TORCH_VER}%2Brocm{ROCM_WIN_VERSION}-cp312-cp312-win_amd64.whl",
+    f"{ROCM_WIN_BASE_URL}/torchvision-{ROCM_WIN_TORCHVISION_VER}%2Brocm{ROCM_WIN_VERSION}-cp312-cp312-win_amd64.whl",
+    f"{ROCM_WIN_BASE_URL}/torchaudio-{ROCM_WIN_TORCHAUDIO_VER}%2Brocm{ROCM_WIN_VERSION}-cp312-cp312-win_amd64.whl",
+]
+
 PROJECT_DIR = Path(__file__).resolve().parent
 VENV_DIR = PROJECT_DIR / ".venv"
 VENV_PYTHON = (
@@ -74,13 +92,27 @@ def check_deps():
     """Return list of missing dependency display names (checks inside .venv)."""
     if not VENV_PYTHON.is_file():
         return [d[0] for d in REQUIRED_DEPS]
+    # Fast path: test all imports in a single subprocess call (avoids 13× startup cost)
+    names = [import_name for _, import_name in REQUIRED_DEPS]
+    script = (
+        "import sys; "
+        "[__import__(n) for n in " + str(names) + "]; "
+        "print('ok')"
+    )
+    result = subprocess.run(
+        [str(VENV_PYTHON), "-c", script],
+        capture_output=True, text=True,
+    )
+    if result.stdout.strip() == "ok":
+        return []
+    # Slow path: identify which ones are missing (rare — only when a dep is broken)
     missing = []
     for display_name, import_name in REQUIRED_DEPS:
-        result = subprocess.run(
+        r = subprocess.run(
             [str(VENV_PYTHON), "-c", f"import {import_name}"],
             capture_output=True,
         )
-        if result.returncode != 0:
+        if r.returncode != 0:
             missing.append(display_name)
     return missing
 
@@ -91,27 +123,65 @@ def check_model():
     return ok, str(MODEL_DIR)
 
 
+def _detect_amd_gpu():
+    """Return AMD GPU display name on Windows/Linux, or empty string."""
+    import platform
+    if platform.system() == "Windows":
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "(Get-CimInstance Win32_VideoController | "
+                 "Where-Object { $_.Name -match 'AMD|Radeon' } | "
+                 "Select-Object -First 1).Name"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return r.stdout.strip()
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            return ""
+    if platform.system() == "Linux":
+        try:
+            r = subprocess.run(
+                ["lspci"], capture_output=True, text=True, timeout=5,
+            )
+            for line in r.stdout.splitlines():
+                low = line.lower()
+                if ("vga" in low or "display" in low) and ("amd" in low or "radeon" in low):
+                    return line.split(":", 2)[-1].strip() if line.count(":") >= 2 else line.strip()
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+    return ""
+
+
 def check_gpu():
     """Return dict describing GPU support.
 
     Keys:
-      backend: 'cuda' | 'mps' | 'cpu'
-      has_nvidia (bool), cuda_ok (bool): CUDA path
+      backend: 'cuda' | 'rocm' | 'mps' | 'cpu'
+      has_nvidia (bool), cuda_ok (bool): NVIDIA / CUDA path
+      has_amd (bool), rocm_ok (bool): AMD / ROCm path
       is_apple_silicon (bool), mps_ok (bool): Apple Silicon path
       name (str): displayable GPU name
       cuda_index_url (str): PyTorch wheel index suffix for CUDA install
+      rocm_index_url (str): PyTorch wheel index suffix for ROCm install
     """
     import re
     import platform
+
+    is_windows = platform.system() == "Windows"
 
     info = {
         "backend": "cpu",
         "has_nvidia": False,
         "cuda_ok": False,
+        "has_amd": False,
+        "rocm_ok": False,
         "is_apple_silicon": False,
         "mps_ok": False,
         "name": "",
         "cuda_index_url": "cu128",
+        "rocm_index_url": "rocm6.4",
+        "rocm_windows": False,
+        "rocm_python_ok": True,
     }
 
     # Apple Silicon detection (no external tools needed)
@@ -148,14 +218,34 @@ def check_gpu():
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         pass
 
-    if info["has_nvidia"] and VENV_PYTHON.is_file():
+    # AMD detection (skipped if NVIDIA already found — single-GPU assumption)
+    if not info["has_nvidia"]:
+        amd_name = _detect_amd_gpu()
+        if amd_name:
+            info["has_amd"] = True
+            info["name"] = amd_name
+            if is_windows:
+                info["rocm_windows"] = True
+                info["rocm_python_ok"] = sys.version_info[:2] == (3, 12)
+
+    # Probe what the venv's torch actually has: cuda wheel vs rocm wheel
+    # ROCm wheels still expose torch.cuda.is_available() — distinguish via torch.version.hip
+    if VENV_PYTHON.is_file() and (info["has_nvidia"] or info["has_amd"]):
         r = subprocess.run(
-            [str(VENV_PYTHON), "-c", "import torch; print(torch.cuda.is_available())"],
+            [str(VENV_PYTHON), "-c",
+             "import torch; print(torch.cuda.is_available(), bool(getattr(torch.version, 'hip', None)))"],
             capture_output=True, text=True,
         )
-        info["cuda_ok"] = r.stdout.strip() == "True"
-        if info["cuda_ok"]:
-            info["backend"] = "cuda"
+        parts = r.stdout.strip().split()
+        if len(parts) == 2:
+            gpu_ok = parts[0] == "True"
+            is_rocm = parts[1] == "True"
+            if gpu_ok and is_rocm:
+                info["rocm_ok"] = True
+                info["backend"] = "rocm"
+            elif gpu_ok:
+                info["cuda_ok"] = True
+                info["backend"] = "cuda"
 
     return info
 
@@ -201,9 +291,13 @@ def full_status():
             "backend": gpu["backend"],
             "has_nvidia": gpu["has_nvidia"],
             "cuda_ok": gpu["cuda_ok"],
+            "has_amd": gpu["has_amd"],
+            "rocm_ok": gpu["rocm_ok"],
             "is_apple_silicon": gpu["is_apple_silicon"],
             "mps_ok": gpu["mps_ok"],
             "name": gpu["name"],
+            "rocm_windows": gpu["rocm_windows"],
+            "rocm_python_ok": gpu["rocm_python_ok"],
         },
         "config": {"gemini": has_gemini, "dashscope": has_dashscope},
     }
@@ -264,15 +358,58 @@ def download_model(log):
     log("ok", "Model downloaded")
 
 
-def install_cuda_torch(log):
-    """Replace CPU torch with CUDA-enabled build detected from nvidia-smi."""
-    cuda_index_url = check_gpu()["cuda_index_url"]
-    log("status", f"安装 GPU 版 PyTorch ({cuda_index_url})，约 2-3 GB...")
-    index_url = f"https://download.pytorch.org/whl/{cuda_index_url}"
+def install_gpu_torch(log):
+    """Install GPU-enabled PyTorch wheel based on detected backend (cuda or rocm)."""
+    gpu = check_gpu()
+    if gpu["has_nvidia"]:
+        suffix = gpu["cuda_index_url"]
+        label = f"CUDA ({suffix})"
+    elif gpu["has_amd"]:
+        if gpu.get("rocm_windows"):
+            return _install_rocm_windows(log)
+        suffix = gpu["rocm_index_url"]
+        label = f"ROCm ({suffix})"
+    else:
+        raise RuntimeError("未检测到 NVIDIA 或 AMD GPU，无需安装 GPU 版 PyTorch")
+
+    log("status", f"安装 GPU 版 PyTorch [{label}]，约 2-3 GB...")
+    index_url = f"https://download.pytorch.org/whl/{suffix}"
     cmd = [
         str(VENV_PYTHON), "-m", "pip", "install",
         "torch", "torchvision", "--force-reinstall", "--index-url", index_url,
     ]
+    _run_pip(cmd, log)
+    log("ok", "GPU 版 PyTorch 安装完成，重启应用后生效")
+
+
+def _install_rocm_windows(log):
+    """Install ROCm SDK + PyTorch wheels on Windows (Python 3.12 required)."""
+    if sys.version_info[:2] != (3, 12):
+        raise RuntimeError(
+            f"Windows ROCm 需要 Python 3.12，当前为 Python {sys.version_info[0]}.{sys.version_info[1]}"
+        )
+
+    # Step 1: Install ROCm SDK wheels
+    log("status", "安装 ROCm SDK（约 2-3 GB）...")
+    cmd = [
+        str(VENV_PYTHON), "-m", "pip", "install",
+        "--no-cache-dir", *ROCM_WIN_SDK_WHEELS,
+    ]
+    _run_pip(cmd, log)
+    log("ok", "ROCm SDK 安装完成")
+
+    # Step 2: Install PyTorch ROCm wheels
+    log("status", f"安装 PyTorch {ROCM_WIN_TORCH_VER}+rocm{ROCM_WIN_VERSION}（约 2-3 GB）...")
+    cmd = [
+        str(VENV_PYTHON), "-m", "pip", "install",
+        "--no-cache-dir", *ROCM_WIN_TORCH_WHEELS,
+    ]
+    _run_pip(cmd, log)
+    log("ok", "Windows ROCm PyTorch 安装完成，重启应用后生效")
+
+
+def _run_pip(cmd, log):
+    """Run a pip command with streaming log output."""
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -284,8 +421,7 @@ def install_cuda_torch(log):
             log("pip", line)
     proc.wait()
     if proc.returncode != 0:
-        raise RuntimeError(f"GPU PyTorch 安装失败 (exit {proc.returncode})")
-    log("ok", "GPU 版 PyTorch 安装完成，重启应用后生效")
+        raise RuntimeError(f"pip 安装失败 (exit {proc.returncode})")
 
 
 # ── SSE event stream ───────────────────────────────────────────────────────────
@@ -351,8 +487,8 @@ class SSEHandler(http.server.BaseHTTPRequestHandler):
             self._run_setup_step(create_venv)
         elif parsed.path == "/api/setup/install-deps":
             self._run_setup_step(install_deps)
-        elif parsed.path == "/api/setup/install-cuda-torch":
-            self._run_setup_step(install_cuda_torch)
+        elif parsed.path == "/api/setup/install-gpu-torch":
+            self._run_setup_step(install_gpu_torch)
         elif parsed.path == "/api/setup/download-model":
             self._run_setup_step(download_model)
         elif parsed.path == "/api/launch":
@@ -655,16 +791,34 @@ function updateUI() {
       setCheck('gpu', 'GPU 加速', true, gpu.name + ' · 等待依赖安装后启用 MPS', 'MPS 待启用');
     }
     gpuBtn.style.display = 'none';
-  } else if (!gpu.has_nvidia) {
-    setCheck('gpu', 'GPU 加速', true, '无 NVIDIA GPU，使用 CPU 推理', 'CPU');
-    gpuBtn.style.display = 'none';
-  } else if (gpu.cuda_ok) {
-    setCheck('gpu', 'GPU 加速', true, gpu.name + ' · CUDA 已启用', 'CUDA');
-    gpuBtn.style.display = 'none';
+  } else if (gpu.has_nvidia) {
+    if (gpu.cuda_ok) {
+      setCheck('gpu', 'GPU 加速', true, gpu.name + ' · CUDA 已启用', 'CUDA');
+      gpuBtn.style.display = 'none';
+    } else {
+      setCheck('gpu', 'GPU 加速', false, gpu.name + ' · 未启用 CUDA，建议安装 GPU 支持', '未启用');
+      gpuBtn.textContent = '安装 CUDA 版 PyTorch';
+      gpuBtn.style.display = '';
+      gpuBtn.disabled = !status.deps.ok;
+    }
+  } else if (gpu.has_amd) {
+    if (gpu.rocm_ok) {
+      setCheck('gpu', 'GPU 加速', true, gpu.name + ' · ROCm 已启用', 'ROCm');
+      gpuBtn.style.display = 'none';
+    } else if (gpu.rocm_windows && !gpu.rocm_python_ok) {
+      setCheck('gpu', 'GPU 加速', false, gpu.name + ' · ROCm 需要 Python 3.12，当前 ' + status.python.version, 'Python 版本不符');
+      gpuBtn.textContent = '安装 ROCm 版 PyTorch（需要 Python 3.12）';
+      gpuBtn.style.display = '';
+      gpuBtn.disabled = true;
+    } else {
+      setCheck('gpu', 'GPU 加速', false, gpu.name + ' · 未启用 ROCm，建议安装 GPU 支持（实验性）', '未启用');
+      gpuBtn.textContent = gpu.rocm_windows ? '安装 ROCm 版 PyTorch' : '安装 ROCm 版 PyTorch（实验性）';
+      gpuBtn.style.display = '';
+      gpuBtn.disabled = !status.deps.ok;
+    }
   } else {
-    setCheck('gpu', 'GPU 加速', false, gpu.name + ' · 未启用 CUDA，建议安装 GPU 支持', '未启用');
-    gpuBtn.style.display = '';
-    gpuBtn.disabled = !status.deps.ok;
+    setCheck('gpu', 'GPU 加速', true, '未检测到独立 GPU，使用 CPU 推理', 'CPU');
+    gpuBtn.style.display = 'none';
   }
 
   document.getElementById('btn-venv').disabled = status.venv.ok;
@@ -737,7 +891,7 @@ async function runStep(btnId, url, label) {
 
 document.getElementById('btn-venv').onclick = () => runStep('btn-venv', '/api/setup/create-venv', '创建虚拟环境');
 document.getElementById('btn-deps').onclick = () => runStep('btn-deps', '/api/setup/install-deps', '安装依赖');
-document.getElementById('btn-gpu').onclick = () => runStep('btn-gpu', '/api/setup/install-cuda-torch', '安装 GPU 支持');
+document.getElementById('btn-gpu').onclick = () => runStep('btn-gpu', '/api/setup/install-gpu-torch', '安装 GPU 支持');
 document.getElementById('btn-model').onclick = () => runStep('btn-model', '/api/setup/download-model', '下载模型');
 document.getElementById('btn-launch').onclick = async () => {
   const btn = document.getElementById('btn-launch');
@@ -822,24 +976,70 @@ def main():
         print(f"需要 Python >= 3.10，当前: {py_ver}")
         sys.exit(1)
 
-    # Phase 1: check environment
-    status = full_status()
-    print(f"Python {py_ver}  ✓")
-    print(f"虚拟环境: {'✓' if status['venv']['ok'] else '✗ 需要创建'}")
-    missing_count = len(status['deps']['missing'])
-    print(f"依赖: {'✓ 全部已安装' if status['deps']['ok'] else f'✗ 缺少 {missing_count} 个包'}")
+    # Phase 1: check environment (one by one for live progress)
+    print("🔍 环境检查:")
 
-    if status["ready"]:
-        print(f"模型: ✓")
-        print(f"\n  环境就绪，启动应用...\n")
+    print("   🐍 Python...", end=" ", flush=True)
+    py_ok, py_ver = check_python()
+    print(f"{'✅' if py_ok else '❌'}  {py_ver}")
+
+    print("   📦 虚拟环境...", end=" ", flush=True)
+    venv_ok, venv_path = check_venv()
+    print(f"{'✅' if venv_ok else '❌ 需要创建'}  {venv_path}")
+
+    print("   📚 依赖包...", end=" ", flush=True)
+    missing_deps = check_deps()
+    deps_ok = len(missing_deps) == 0
+    if deps_ok:
+        print("✅ 全部已安装")
+    else:
+        print(f"❌ 缺少 {len(missing_deps)} 个: {', '.join(missing_deps)}")
+
+    print("   🎮 GPU...", end=" ", flush=True)
+    gpu = check_gpu()
+    if gpu['backend'] == 'rocm':
+        print(f"✅ {gpu['name']} · ROCm")
+    elif gpu['backend'] == 'cuda':
+        print(f"✅ {gpu['name']} · CUDA")
+    elif gpu['backend'] == 'mps':
+        print(f"✅ {gpu['name']} · MPS")
+    elif gpu['has_amd']:
+        print(f"⚠️ {gpu['name']} · 未启用")
+    elif gpu['has_nvidia']:
+        print(f"⚠️ {gpu['name']} · 未启用")
+    else:
+        print("💻 CPU 推理")
+
+    print("   🧠 模型...", end=" ", flush=True)
+    model_ok, model_path = check_model()
+    print(f"{'✅' if model_ok else '❌ 需要下载'}  {model_path}")
+
+    # Build status dict for downstream use
+    _, has_gemini, has_dashscope = check_config()
+    ready = py_ok and venv_ok and deps_ok and model_ok
+
+    class Status:
+        def __init__(s):
+            s.ready = ready
+            s.python = {"ok": py_ok, "version": py_ver}
+            s.venv = {"ok": venv_ok, "path": venv_path}
+            s.deps = {"ok": deps_ok, "missing": missing_deps}
+            s.model = {"ok": model_ok, "path": model_path}
+            s.gpu = gpu
+            s.config = {"gemini": has_gemini, "dashscope": has_dashscope}
+
+    status = Status()
+
+    if status.ready:
+        print(f"\n✅ 环境就绪，启动应用...\n")
         # Start Gradio directly and proxy
         gradio_proc = run_gradio_server()
-        print(f"  等待 Gradio 监听 {HOST}:{GRADIO_PORT} ...", end="", flush=True)
+        print(f"⏳ 等待 Gradio 监听 {HOST}:{GRADIO_PORT} ...", end="", flush=True)
         if wait_for_gradio(timeout=60.0):
-            print(" ✓")
+            print(" ✅")
         else:
-            print(" ⚠ 超时（60s），仍尝试打开浏览器（首次访问可能看到「启动中」页面）")
-        print(f"  浏览器打开: http://{HOST}:{PORT}\n")
+            print(" ⚠️ 超时（60s），仍尝试打开浏览器")
+        print(f"🌐 浏览器打开: http://{HOST}:{PORT}\n")
         webbrowser.open(f"http://{HOST}:{PORT}")
         proxy = http.server.ThreadingHTTPServer((HOST, PORT), ReverseProxyHandler)
         try:
@@ -851,18 +1051,18 @@ def main():
             gradio_proc.wait()
         return
 
-    print(f"模型: {'✓' if status['model']['ok'] else '✗ 需要下载 (~840 MB)'}")
+    print(f"模型: {'✓' if status.model['ok'] else '✗ 需要下载 (~840 MB)'}")
 
     # Phase 2: setup wizard
-    print(f"\n  启动环境初始化向导...")
+    print(f"\n🛠️ 启动环境初始化向导...")
     server = run_setup_server()
     server.serve_forever()
 
     # Phase 3: setup complete, launch Gradio
-    print("\n  环境初始化完成，启动应用...\n")
+    print("\n✅ 环境初始化完成，启动应用...\n")
     gradio_proc = run_gradio_server()
     proxy = run_proxy()
-    print(f"  Gradio 启动中: http://{HOST}:{PORT}\n")
+    print(f"🚀 Gradio 启动中: http://{HOST}:{PORT}\n")
 
     try:
         gradio_proc.wait()
