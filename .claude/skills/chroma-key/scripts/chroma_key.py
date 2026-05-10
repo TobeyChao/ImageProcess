@@ -1,5 +1,6 @@
 import os
 import sys
+
 import numpy as np
 from PIL import Image
 
@@ -11,7 +12,10 @@ def parse_hex_color(hex_str: str) -> tuple:
         hex_str = "".join(c * 2 for c in hex_str)
     if len(hex_str) != 6:
         raise ValueError(f"无效的颜色格式: {hex_str!r}，请使用 #RRGGBB 格式")
-    return tuple(int(hex_str[i:i+2], 16) for i in (0, 2, 4))
+    try:
+        return tuple(int(hex_str[i:i+2], 16) for i in (0, 2, 4))
+    except ValueError:
+        raise ValueError(f"无效的颜色格式: {hex_str!r}，请使用 #RRGGBB 格式")
 
 
 def auto_detect_color(image: Image.Image) -> tuple:
@@ -21,16 +25,18 @@ def auto_detect_color(image: Image.Image) -> tuple:
     samples = []
     corners = [(0, 0), (w - 5, 0), (0, h - 5), (w - 5, h - 5)]
     for x, y in corners:
-        x = max(0, min(x, w - 5))
-        y = max(0, min(y, h - 5))
-        crop = img.crop((x, y, x + 5, y + 5))
+        x = max(0, min(x, w - 1))
+        y = max(0, min(y, h - 1))
+        x2 = min(x + 5, w)
+        y2 = min(y + 5, h)
+        crop = img.crop((x, y, x2, y2))
         samples.append(np.array(crop, dtype=np.uint8).reshape(-1, 3))
     all_pixels = np.vstack(samples)
     median = np.median(all_pixels, axis=0).astype(np.uint8)
     return tuple(int(c) for c in median)
 
 
-def chroma_key_remove(image: Image.Image, color, tolerance: int = 32) -> Image.Image:
+def chroma_key_remove(image: Image.Image, color: str | tuple, tolerance: int = 32) -> Image.Image:
     """色键抠图，返回 RGBA PIL Image。
 
     Args:
@@ -38,6 +44,8 @@ def chroma_key_remove(image: Image.Image, color, tolerance: int = 32) -> Image.I
         color: (R, G, B) tuple 或 "auto" 字符串
         tolerance: 容差 0-255
     """
+    tolerance = max(1, min(255, int(tolerance)))
+
     if isinstance(color, str) and color.lower() == "auto":
         color = auto_detect_color(image)
     elif isinstance(color, str):
@@ -93,8 +101,11 @@ def chroma_key_remove(image: Image.Image, color, tolerance: int = 32) -> Image.I
     alpha = np.full((h, w), 255, dtype=np.uint8)
     in_region = visited
     d = distance[in_region]
-    t = np.clip(d / tolerance, 0.0, 1.0)  # 0.0 (close to bg) to 1.0 (at tolerance)
-    alpha[in_region] = (t * 255).astype(np.uint8)
+    if tolerance > 0:
+        t = np.clip(d / tolerance, 0.0, 1.0)
+        alpha[in_region] = (t * 255).astype(np.uint8)
+    else:
+        alpha[in_region] = 0
 
     # 5. 合成 RGBA
     result = np.dstack([arr.astype(np.uint8), alpha])
