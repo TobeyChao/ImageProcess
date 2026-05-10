@@ -20,6 +20,7 @@ rmbg_mod = skills.load("rmbg")
 bwdiff_mod = skills.load("bwdiff")
 bwgen_mod = skills.load("bwgen")
 genimg_mod = skills.load("gen-image")
+chroma_mod = skills.load("chroma-key")
 
 # ── Config helpers ────────────────────────────────────────────────────────────
 
@@ -262,6 +263,50 @@ def bwdiff_process(black, white):
         alpha, fg = bwdiff_mod.compute_alpha(black_arr, white_arr)
         result = np.dstack([fg, alpha])
         return Image.fromarray(result, "RGBA"), "处理完成 ✓"
+    except Exception as e:
+        msg, hint = errors.user_message(e)
+        return None, f"{msg}\n{hint}"
+
+
+# ── Tab: Chroma Key ────────────────────────────────────────────────────────────
+
+def chroma_auto_detect(image):
+    """Auto-detect background color from uploaded image."""
+    if image is None:
+        return "", "请先上传图片"
+    try:
+        r, g, b = chroma_mod.auto_detect_color(image)
+        return f"#{r:02X}{g:02X}{b:02X}", ""
+    except Exception as e:
+        msg, hint = errors.user_message(e)
+        return "", f"{msg}\n{hint}"
+
+
+def chroma_pick_color(image, evt: gr.SelectData):
+    """Handle click-to-pick on image."""
+    if image is None:
+        return "", "请先上传图片"
+    try:
+        x, y = evt.index[0], evt.index[1]
+        rgb = image.convert("RGB")
+        r, g, b = rgb.getpixel((x, y))
+        return f"#{r:02X}{g:02X}{b:02X}", ""
+    except Exception as e:
+        msg, hint = errors.user_message(e)
+        return "", f"{msg}\n{hint}"
+
+
+def chroma_key_process(image, color_hex, tolerance):
+    """Main processing function for chroma key tab."""
+    if image is None:
+        return None, "请上传图片"
+    if not color_hex or not color_hex.strip():
+        return None, "请指定背景色或使用自动检测"
+    try:
+        result = chroma_mod.chroma_key_remove(
+            image, color_hex.strip(), tolerance=int(tolerance)
+        )
+        return result, "处理完成 ✓"
     except Exception as e:
         msg, hint = errors.user_message(e)
         return None, f"{msg}\n{hint}"
@@ -560,6 +605,65 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
             outputs=[bwdiff_result, bwdiff_status],
         )
 
+    with gr.Tab("🌈 色键抠图"):
+        gr.Markdown("### 色键抠图——移除纯色背景")
+        with gr.Row():
+            with gr.Column(scale=1):
+                chroma_input = gr.Image(label="上传图片", type="pil", height="45vh")
+                with gr.Row():
+                    chroma_color = gr.Textbox(
+                        label="背景色", placeholder="#FFFFFF（自动检测或手动输入）",
+                        scale=3,
+                    )
+                with gr.Row():
+                    chroma_auto_btn = gr.Button("🎯 自动检测", size="sm", scale=1)
+                chroma_tolerance = gr.Slider(
+                    label="容差", minimum=1, maximum=255, value=32, step=1,
+                    info="值越大，抠除的颜色范围越宽",
+                )
+                chroma_btn = gr.Button("▶ 开始处理", variant="primary", size="lg")
+            with gr.Column(scale=1):
+                chroma_output = gr.Image(label="结果", type="pil", height="45vh",
+                                        format="png", image_mode="RGBA", buttons=["fullscreen"],
+                                        elem_classes=["alpha-preview"])
+                chroma_status = gr.Textbox(label="状态", interactive=False, lines=1)
+        chroma_msg_state = gr.State("")
+
+        # 上传图片 → 自动检测背景色
+        chroma_input.upload(
+            fn=chroma_auto_detect,
+            inputs=[chroma_input],
+            outputs=[chroma_color, chroma_status],
+        )
+
+        # 点击图片取色
+        chroma_input.select(
+            fn=chroma_pick_color,
+            inputs=[chroma_input],
+            outputs=[chroma_color, chroma_status],
+        )
+
+        # 自动检测按钮
+        chroma_auto_btn.click(
+            fn=chroma_auto_detect,
+            inputs=[chroma_input],
+            outputs=[chroma_color, chroma_status],
+        )
+
+        # 开始处理
+        chroma_btn.click(
+            fn=lambda: "处理中...",
+            outputs=[chroma_status],
+        ).then(
+            fn=chroma_key_process,
+            inputs=[chroma_input, chroma_color, chroma_tolerance],
+            outputs=[chroma_output, chroma_msg_state],
+        ).then(
+            fn=lambda s: s,
+            inputs=[chroma_msg_state],
+            outputs=[chroma_status],
+        )
+
     with gr.Tab("🎨 生黑白底图"):
         gr.Markdown("### 从描述生成黑白背景双图")
         with gr.Row():
@@ -696,7 +800,7 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
 
 if __name__ == "__main__":
     # Create output directories
-    for sub in ["rmbg", "bwdiff", "bwgen", "gen-image"]:
+    for sub in ["rmbg", "bwdiff", "bwgen", "gen-image", "chroma-key"]:
         os.makedirs(PROJECT_DIR / "local" / "output" / sub, exist_ok=True)
 
     app.launch(server_name="127.0.0.1", server_port=7861, share=False, css=CSS, theme=THEME, head=EYE_TOGGLE_JS)
