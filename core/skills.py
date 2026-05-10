@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILL_SCRIPTS: dict[str, tuple[str, str]] = {
     "rmbg": ("rmbg/scripts/rmbg_process.py", "rmbg_process"),
     "bwdiff": ("bwdiff/scripts/bw_diff.py", "bw_diff"),
+    "chroma-key": ("chroma-key/scripts/chroma_key.py", "chroma_key"),
     "bwgen": ("bwgen/scripts/bw_gen.py", "bw_gen"),
     "gen-image": ("gen-image/scripts/gen_image.py", "gen_image"),
 }
