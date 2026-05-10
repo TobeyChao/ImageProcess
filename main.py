@@ -965,6 +965,91 @@ def wait_for_gradio(timeout: float = 60.0, interval: float = 0.3) -> bool:
     return False
 
 
+def _port_process(port):
+    """Return (pid, name) for the process occupying *port*, or (None, None).
+
+    Uses bind() rather than connect() so TIME_WAIT ports are also detected.
+    """
+    import platform, socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind(("127.0.0.1", port))
+        s.close()
+        return None, None
+    except OSError:
+        pass
+    finally:
+        s.close()
+
+    system = platform.system()
+    try:
+        if system == "Windows":
+            r = subprocess.run(
+                ["netstat", "-ano"], capture_output=True, text=True
+            )
+            for line in r.stdout.splitlines():
+                if f":{port}" in line and "LISTENING" in line:
+                    pid = line.strip().split()[-1]
+                    r2 = subprocess.run(
+                        ["tasklist", "/FI", f"PID eq {pid}"],
+                        capture_output=True, text=True,
+                    )
+                    for ln in r2.stdout.splitlines():
+                        if pid in ln:
+                            return pid, ln.strip().split()[0]
+        else:
+            r = subprocess.run(
+                ["lsof", "-ti", f":{port}"], capture_output=True, text=True
+            )
+            pid = r.stdout.strip().split("\n")[0]
+            if pid:
+                r2 = subprocess.run(
+                    ["ps", "-p", pid, "-o", "comm="],
+                    capture_output=True, text=True,
+                )
+                name = r2.stdout.strip()
+                return pid, name
+    except Exception:
+        pass
+    return None, None
+
+
+def _check_port_conflicts():
+    """Check if required ports are in use. If so, ask user whether to kill."""
+    conflicts = []
+    for port in (PORT, GRADIO_PORT):
+        pid, name = _port_process(port)
+        if pid:
+            conflicts.append((port, pid, name))
+
+    if not conflicts:
+        return
+
+    print("⚠️  端口冲突:")
+    for port, pid, name in conflicts:
+        print(f"    127.0.0.1:{port}  →  PID {pid} ({name})")
+    print()
+    ans = input("  是否终止以上进程后继续？[Y/n] ").strip().lower()
+    if ans in ("n", "no"):
+        print("  已取消\n")
+        sys.exit(0)
+
+    import signal
+    for _, pid, _ in conflicts:
+        try:
+            os.kill(int(pid), signal.SIGTERM)
+        except Exception:
+            pass
+    time.sleep(0.5)
+    for _, pid, _ in conflicts:
+        try:
+            os.kill(int(pid), signal.SIGKILL)
+        except Exception:
+            pass
+    print("  已终止\n")
+
+
 def main():
     print("╔══════════════════════════════════════════╗")
     print("║   Image Processing Toolbox              ║")
@@ -1029,6 +1114,8 @@ def main():
             s.config = {"gemini": has_gemini, "dashscope": has_dashscope}
 
     status = Status()
+
+    _check_port_conflicts()
 
     if status.ready:
         print(f"\n✅ 环境就绪，启动应用...\n")
