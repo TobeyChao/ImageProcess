@@ -248,7 +248,7 @@ def rmbg_process(image, model_dir, threshold, edge_refine, white_bg):
 # ── Tab 3: Black-White Diff (bwdiff) ──────────────────────────────────────────
 
 
-def bwdiff_process(black, white):
+def bwdiff_process(black, white, tolerance):
     """Take both PIL inputs directly (no module-level state)."""
     if black is None or white is None:
         return None, "请上传黑底图和白底图"
@@ -260,7 +260,7 @@ def bwdiff_process(black, white):
 
         black_arr = np.array(black.convert("RGB"), dtype=np.float32)
         white_arr = np.array(white.convert("RGB"), dtype=np.float32)
-        alpha, fg = bwdiff_mod.compute_alpha(black_arr, white_arr)
+        alpha, fg = bwdiff_mod.compute_alpha(black_arr, white_arr, tolerance=int(tolerance))
         result = np.dstack([fg, alpha])
         return Image.fromarray(result, "RGBA"), "处理完成 ✓"
     except Exception as e:
@@ -355,7 +355,7 @@ def genimg_generate(prompt, ratio, size, model):
 
 # ── Tab 6: Pipeline (bwgen → bwdiff) ─────────────────────────────────────────
 
-def pipeline_run(prompt, ratio, size, model):
+def pipeline_run(prompt, ratio, size, model, tolerance):
     if not prompt or not prompt.strip():
         return None, None, None, "请输入主体描述"
 
@@ -368,7 +368,7 @@ def pipeline_run(prompt, ratio, size, model):
             )
 
         # Step 2: diff to RGBA (reuses bwdiff module — no code duplication)
-        result = bwdiff_mod.bw_diff(black_path, white_path)
+        result = bwdiff_mod.bw_diff(black_path, white_path, tolerance=int(tolerance))
 
         from PIL import Image
         return (Image.open(black_path), Image.open(white_path), result,
@@ -596,12 +596,17 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                                         format="png", image_mode="RGBA", buttons=["fullscreen"],
                                         elem_classes=["alpha-preview"])
         with gr.Row():
+            bwdiff_tolerance = gr.Slider(
+                label="背景容差", minimum=0, maximum=80, step=1, value=10,
+                info="容忍 AI 生图背景非纯黑/白的误差。0=严格，值越大边缘越干净但可能损失半透明细节。",
+            )
+        with gr.Row():
             bwdiff_btn = gr.Button("▶ 开始处理", variant="primary", size="lg")
         bwdiff_status = gr.Textbox(label="状态", interactive=False, lines=1)
 
         bwdiff_btn.click(
             fn=bwdiff_process,
-            inputs=[bwdiff_black, bwdiff_white],
+            inputs=[bwdiff_black, bwdiff_white, bwdiff_tolerance],
             outputs=[bwdiff_result, bwdiff_status],
         )
 
@@ -761,6 +766,10 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                         label="模型", choices=MODEL_CHOICES, value="gemini",
                         info="Gemini 速度快；Wan2.7 质量更高、支持 4K",
                     )
+                pipe_tolerance = gr.Slider(
+                    label="背景容差", minimum=0, maximum=80, step=1, value=10,
+                    info="AI 生图背景非纯黑/白时调高此值；0=严格，值越大边缘越干净。",
+                )
                 pipe_btn = gr.Button("▶ 一键执行", variant="primary", size="lg")
             with gr.Column(scale=1):
                 gr.Markdown("""
@@ -788,7 +797,7 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
 
         pipe_btn.click(
             fn=pipeline_run,
-            inputs=[pipe_prompt, pipe_ratio, pipe_size, pipe_model],
+            inputs=[pipe_prompt, pipe_ratio, pipe_size, pipe_model, pipe_tolerance],
             outputs=[pipe_black, pipe_white, pipe_result, pipe_status],
         )
 
