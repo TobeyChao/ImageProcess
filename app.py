@@ -542,11 +542,11 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
             outputs=[gpu_status_box, gpu_install_box],
         )
 
-    with gr.Tab("🎯 去背景"):
+    with gr.Tab("🎯 AI 去背景"):
         gr.Markdown("### BiRefNet 深度学习去背景")
         with gr.Row():
             with gr.Column(scale=1):
-                rmbg_input = gr.Image(label="上传图片", type="pil", height="45vh")
+                rmbg_input = gr.Image(label="上传图片", type="pil", height="45vh", buttons=["fullscreen"])
                 rmbg_btn = gr.Button("▶ 开始处理", variant="primary", size="lg")
                 with gr.Accordion("⚙ 高级选项", open=False):
                     rmbg_model_dir = gr.Textbox(
@@ -584,166 +584,8 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
             outputs=[rmbg_status],
         )
 
-    with gr.Tab("⬛⬜ 黑白差分"):
-        gr.Markdown("### 黑白差分去背景（需同机位黑底+白底图）")
-        with gr.Row():
-            with gr.Column(scale=1):
-                bwdiff_black = gr.Image(label="黑底图", type="pil", height="35vh")
-            with gr.Column(scale=1):
-                bwdiff_white = gr.Image(label="白底图", type="pil", height="35vh")
-            with gr.Column(scale=1):
-                bwdiff_result = gr.Image(label="抠图结果", type="pil", height="35vh",
-                                        format="png", image_mode="RGBA", buttons=["fullscreen"],
-                                        elem_classes=["alpha-preview"])
-        with gr.Row():
-            bwdiff_tolerance = gr.Slider(
-                label="背景容差", minimum=0, maximum=80, step=1, value=10,
-                info="容忍 AI 生图背景非纯黑/白的误差。0=严格，值越大边缘越干净但可能损失半透明细节。",
-            )
-        with gr.Row():
-            bwdiff_btn = gr.Button("▶ 开始处理", variant="primary", size="lg")
-        bwdiff_status = gr.Textbox(label="状态", interactive=False, lines=1)
-
-        bwdiff_btn.click(
-            fn=bwdiff_process,
-            inputs=[bwdiff_black, bwdiff_white, bwdiff_tolerance],
-            outputs=[bwdiff_result, bwdiff_status],
-        )
-
-    with gr.Tab("🌈 色键抠图"):
-        gr.Markdown("### 色键抠图——移除纯色背景")
-        with gr.Row():
-            with gr.Column(scale=1):
-                chroma_input = gr.Image(label="上传图片", type="pil", height="45vh")
-                with gr.Row():
-                    chroma_color = gr.Textbox(
-                        label="背景色", placeholder="#FFFFFF（自动检测或手动输入）",
-                        scale=3,
-                    )
-                with gr.Row():
-                    chroma_auto_btn = gr.Button("🎯 自动检测", size="sm", scale=1)
-                chroma_tolerance = gr.Slider(
-                    label="容差", minimum=1, maximum=255, value=32, step=1,
-                    info="值越大，抠除的颜色范围越宽",
-                )
-                chroma_btn = gr.Button("▶ 开始处理", variant="primary", size="lg")
-            with gr.Column(scale=1):
-                chroma_output = gr.Image(label="结果", type="pil", height="45vh",
-                                        format="png", image_mode="RGBA", buttons=["fullscreen"],
-                                        elem_classes=["alpha-preview"])
-                chroma_status = gr.Textbox(label="状态", interactive=False, lines=1)
-        chroma_msg_state = gr.State("")
-
-        # 上传图片 → 自动检测背景色
-        chroma_input.upload(
-            fn=chroma_auto_detect,
-            inputs=[chroma_input],
-            outputs=[chroma_color, chroma_status],
-        )
-
-        # 点击图片取色
-        chroma_input.select(
-            fn=chroma_pick_color,
-            inputs=[chroma_input],
-            outputs=[chroma_color, chroma_status],
-        )
-
-        # 自动检测按钮
-        chroma_auto_btn.click(
-            fn=chroma_auto_detect,
-            inputs=[chroma_input],
-            outputs=[chroma_color, chroma_status],
-        )
-
-        # 开始处理
-        chroma_btn.click(
-            fn=lambda: "处理中...",
-            outputs=[chroma_status],
-        ).then(
-            fn=chroma_key_process,
-            inputs=[chroma_input, chroma_color, chroma_tolerance],
-            outputs=[chroma_output, chroma_msg_state],
-        ).then(
-            fn=lambda s: s,
-            inputs=[chroma_msg_state],
-            outputs=[chroma_status],
-        )
-
-    with gr.Tab("🎨 生黑白底图"):
-        gr.Markdown("### 从描述生成黑白背景双图")
-        with gr.Row():
-            with gr.Column(scale=1):
-                bwgen_prompt = gr.Textbox(
-                    label="主体描述",
-                    placeholder="例如：一把发光的魔法剑、一只蓬松的白猫",
-                    lines=2,
-                    info="描述主体即可，无需提到背景。系统自动添加黑/白背景指令。",
-                )
-                with gr.Row():
-                    bwgen_ratio = gr.Dropdown(
-                        label="宽高比", choices=RATIO_CHOICES, value="1:1",
-                        info="1:1 通用；16:9 横屏壁纸；9:16 手机壁纸",
-                    )
-                    bwgen_size = gr.Dropdown(
-                        label="分辨率", choices=SIZE_CHOICES, value="1K",
-                        info="1K=1024px；2K=2048px；4K 仅 Wan2.7 支持",
-                    )
-                    bwgen_model = gr.Dropdown(
-                        label="模型", choices=MODEL_CHOICES, value="gemini",
-                        info="Gemini 速度快；Wan2.7 质量更高、支持 4K",
-                    )
-                bwgen_btn = gr.Button("▶ 开始生成", variant="primary", size="lg")
-            with gr.Column(scale=1):
-                bwgen_black = gr.Image(label="黑底图", type="pil", height="38vh",
-                                      format="png", buttons=["fullscreen"])
-            with gr.Column(scale=1):
-                bwgen_white = gr.Image(label="白底图", type="pil", height="38vh",
-                                      format="png", buttons=["fullscreen"])
-        bwgen_status = gr.Textbox(label="状态", interactive=False, lines=2)
-
-        bwgen_btn.click(
-            fn=bwgen_generate,
-            inputs=[bwgen_prompt, bwgen_ratio, bwgen_size, bwgen_model],
-            outputs=[bwgen_black, bwgen_white, bwgen_status],
-        )
-
-    with gr.Tab("📷 生图"):
-        gr.Markdown("### AI 图片生成")
-        with gr.Row():
-            with gr.Column(scale=1):
-                genimg_prompt = gr.Textbox(
-                    label="提示词（英文效果更佳）",
-                    placeholder="例如：a glowing magic sword on black background, fantasy art style",
-                    lines=2,
-                    info="描述主体、风格、氛围；英文提示词效果通常优于中文。",
-                )
-                with gr.Row():
-                    genimg_ratio = gr.Dropdown(
-                        label="宽高比", choices=RATIO_CHOICES, value="1:1",
-                        info="1:1 通用；16:9 横屏壁纸；9:16 手机壁纸",
-                    )
-                    genimg_size = gr.Dropdown(
-                        label="分辨率", choices=SIZE_CHOICES, value="1K",
-                        info="1K=1024px；2K=2048px；4K 仅文生图模式支持",
-                    )
-                    genimg_model = gr.Dropdown(
-                        label="模型", choices=MODEL_CHOICES, value="gemini",
-                        info="Gemini 速度快；Wan2.7 质量更高、支持 4K",
-                    )
-                genimg_btn = gr.Button("▶ 开始生成", variant="primary", size="lg")
-            with gr.Column(scale=1):
-                genimg_output = gr.Image(label="生成结果", type="pil", height="50vh",
-                                        format="png", buttons=["fullscreen"])
-        genimg_status = gr.Textbox(label="状态", interactive=False, lines=2)
-
-        genimg_btn.click(
-            fn=genimg_generate,
-            inputs=[genimg_prompt, genimg_ratio, genimg_size, genimg_model],
-            outputs=[genimg_output, genimg_status],
-        )
-
-    with gr.Tab("🔄 一键管线"):
-        gr.Markdown("### bwgen → bwdiff 一键抠图")
+    with gr.Tab("🎨 文生抠图"):
+        gr.Markdown("### 文字描述 → 透明背景素材")
 
         with gr.Row():
             with gr.Column(scale=2):
@@ -799,6 +641,126 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
             fn=pipeline_run,
             inputs=[pipe_prompt, pipe_ratio, pipe_size, pipe_model, pipe_tolerance],
             outputs=[pipe_black, pipe_white, pipe_result, pipe_status],
+        )
+
+    with gr.Tab("📷 生图"):
+        gr.Markdown("### AI 图片生成")
+        with gr.Row():
+            with gr.Column(scale=1):
+                genimg_prompt = gr.Textbox(
+                    label="提示词（英文效果更佳）",
+                    placeholder="例如：a glowing magic sword on black background, fantasy art style",
+                    lines=2,
+                    info="描述主体、风格、氛围；英文提示词效果通常优于中文。",
+                )
+                with gr.Row():
+                    genimg_ratio = gr.Dropdown(
+                        label="宽高比", choices=RATIO_CHOICES, value="1:1",
+                        info="1:1 通用；16:9 横屏壁纸；9:16 手机壁纸",
+                    )
+                    genimg_size = gr.Dropdown(
+                        label="分辨率", choices=SIZE_CHOICES, value="1K",
+                        info="1K=1024px；2K=2048px；4K 仅文生图模式支持",
+                    )
+                    genimg_model = gr.Dropdown(
+                        label="模型", choices=MODEL_CHOICES, value="gemini",
+                        info="Gemini 速度快；Wan2.7 质量更高、支持 4K",
+                    )
+                genimg_btn = gr.Button("▶ 开始生成", variant="primary", size="lg")
+            with gr.Column(scale=1):
+                genimg_output = gr.Image(label="生成结果", type="pil", height="50vh",
+                                        format="png", buttons=["fullscreen"])
+        genimg_status = gr.Textbox(label="状态", interactive=False, lines=2)
+
+        genimg_btn.click(
+            fn=genimg_generate,
+            inputs=[genimg_prompt, genimg_ratio, genimg_size, genimg_model],
+            outputs=[genimg_output, genimg_status],
+        )
+
+    with gr.Tab("⬛⬜ 黑白差分"):
+        gr.Markdown("### 黑白差分去背景（需同机位黑底+白底图）")
+        with gr.Row():
+            with gr.Column(scale=1):
+                bwdiff_black = gr.Image(label="黑底图", type="pil", height="35vh", buttons=["fullscreen"])
+            with gr.Column(scale=1):
+                bwdiff_white = gr.Image(label="白底图", type="pil", height="35vh", buttons=["fullscreen"])
+            with gr.Column(scale=1):
+                bwdiff_result = gr.Image(label="抠图结果", type="pil", height="35vh",
+                                        format="png", image_mode="RGBA", buttons=["fullscreen"],
+                                        elem_classes=["alpha-preview"])
+        with gr.Row():
+            bwdiff_tolerance = gr.Slider(
+                label="背景容差", minimum=0, maximum=80, step=1, value=10,
+                info="容忍 AI 生图背景非纯黑/白的误差。0=严格，值越大边缘越干净但可能损失半透明细节。",
+            )
+        with gr.Row():
+            bwdiff_btn = gr.Button("▶ 开始处理", variant="primary", size="lg")
+        bwdiff_status = gr.Textbox(label="状态", interactive=False, lines=1)
+
+        bwdiff_btn.click(
+            fn=bwdiff_process,
+            inputs=[bwdiff_black, bwdiff_white, bwdiff_tolerance],
+            outputs=[bwdiff_result, bwdiff_status],
+        )
+
+    with gr.Tab("🌈 色键抠图"):
+        gr.Markdown("### 色键抠图——移除纯色背景")
+        with gr.Row():
+            with gr.Column(scale=1):
+                chroma_input = gr.Image(label="上传图片", type="pil", height="45vh", buttons=["fullscreen"])
+                with gr.Row():
+                    chroma_color = gr.Textbox(
+                        label="背景色", placeholder="#FFFFFF（自动检测或手动输入）",
+                        scale=3,
+                    )
+                with gr.Row():
+                    chroma_auto_btn = gr.Button("🎯 自动检测", size="sm", scale=1)
+                chroma_tolerance = gr.Slider(
+                    label="容差", minimum=1, maximum=255, value=32, step=1,
+                    info="值越大，抠除的颜色范围越宽",
+                )
+                chroma_btn = gr.Button("▶ 开始处理", variant="primary", size="lg")
+            with gr.Column(scale=1):
+                chroma_output = gr.Image(label="结果", type="pil", height="45vh",
+                                        format="png", image_mode="RGBA", buttons=["fullscreen"],
+                                        elem_classes=["alpha-preview"])
+                chroma_status = gr.Textbox(label="状态", interactive=False, lines=1)
+        chroma_msg_state = gr.State("")
+
+        # 上传图片 → 自动检测背景色
+        chroma_input.upload(
+            fn=chroma_auto_detect,
+            inputs=[chroma_input],
+            outputs=[chroma_color, chroma_status],
+        )
+
+        # 点击图片取色
+        chroma_input.select(
+            fn=chroma_pick_color,
+            inputs=[chroma_input],
+            outputs=[chroma_color, chroma_status],
+        )
+
+        # 自动检测按钮
+        chroma_auto_btn.click(
+            fn=chroma_auto_detect,
+            inputs=[chroma_input],
+            outputs=[chroma_color, chroma_status],
+        )
+
+        # 开始处理
+        chroma_btn.click(
+            fn=lambda: "处理中...",
+            outputs=[chroma_status],
+        ).then(
+            fn=chroma_key_process,
+            inputs=[chroma_input, chroma_color, chroma_tolerance],
+            outputs=[chroma_output, chroma_msg_state],
+        ).then(
+            fn=lambda s: s,
+            inputs=[chroma_msg_state],
+            outputs=[chroma_status],
         )
 
     gr.Markdown(

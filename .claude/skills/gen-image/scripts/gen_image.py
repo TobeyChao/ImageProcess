@@ -74,7 +74,7 @@ def generate_gemini(prompt: str, ratio: str, size: str, output_dir: str) -> str:
     )
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash-image",
+        model="gemini-3.1-flash-image-preview",
         contents=[prompt],
         config=config
     )
