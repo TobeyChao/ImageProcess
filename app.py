@@ -771,5 +771,9 @@ if __name__ == "__main__":
     # Create output directories
     for sub in ["rmbg", "bwdiff", "bwgen", "gen-image", "chroma-key"]:
         os.makedirs(PROJECT_DIR / "local" / "output" / sub, exist_ok=True)
-
-    app.launch(server_name="127.0.0.1", server_port=7861, share=False, css=CSS, theme=THEME, head=EYE_TOGGLE_JS)
+    
+    _, local_url, _ = app.launch(css=CSS, theme=THEME, head=EYE_TOGGLE_JS, prevent_thread_lock=True)
+    if "--open-browser" in sys.argv:
+        import webbrowser
+        webbrowser.open(local_url)
+    app.block_thread()
