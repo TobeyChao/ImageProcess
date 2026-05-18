@@ -228,17 +228,14 @@ def settings_save(model_dir, gemini_key, dashscope_key):
 
 # ── Tab 2: Background Removal (rmbg) ──────────────────────────────────────────
 
-def rmbg_process(image, model_dir, threshold, edge_refine, white_bg):
+def rmbg_process(image, model_dir):
     if image is None:
         return None, "请上传图片"
     if not model_dir or not os.path.isdir(model_dir):
         return None, "模型目录不存在，请在设置中配置"
     try:
         model, device = get_model(model_dir)
-        result = rmbg_mod.process_image(image, model, device,
-                                        threshold=threshold,
-                                        edge_refine=edge_refine,
-                                        white_bg=white_bg)
+        result = rmbg_mod.process_image(image, model, device)
         return result, "处理完成 ✓"
     except Exception as e:
         msg, hint = errors.user_message(e)
@@ -554,16 +551,16 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
                         value=initial_cfg.get("model_dir", DEFAULT_MODEL_DIR),
                         info="BiRefNet 模型文件目录，通常无需修改",
                     )
-                    rmbg_threshold = gr.Slider(
-                        label="二值化阈值",
-                        minimum=0.3, maximum=0.7, value=0.5, step=0.05,
-                        info="0.3–0.4 保留发丝细节；0.5 平衡；0.6–0.7 边缘更干净",
-                    )
-                    with gr.Row():
-                        rmbg_edge = gr.Checkbox(label="边缘优化", value=True,
-                                                info="高斯平滑 mask 边缘，去锯齿，处理时间约增加 10%")
-                        rmbg_whitebg = gr.Checkbox(label="白底输出", value=False,
-                                                   info="输出白色背景 RGB 图而非透明 PNG，适合直接打印")
+                    # rmbg_threshold = gr.Slider(
+                    #     label="二值化阈值",
+                    #     minimum=0.3, maximum=0.7, value=0.5, step=0.05,
+                    #     info="0.3–0.4 保留发丝细节；0.5 平衡；0.6–0.7 边缘更干净",
+                    # )
+                    # with gr.Row():
+                    #     rmbg_edge = gr.Checkbox(label="边缘优化", value=True,
+                    #                             info="高斯平滑 mask 边缘，去锯齿，处理时间约增加 10%")
+                    #     rmbg_whitebg = gr.Checkbox(label="白底输出", value=False,
+                    #                                info="输出白色背景 RGB 图而非透明 PNG，适合直接打印")
             with gr.Column(scale=1):
                 rmbg_output = gr.Image(label="结果", type="pil", height="45vh",
                                        format="png", image_mode="RGBA", buttons=["fullscreen"],
@@ -576,7 +573,8 @@ with gr.Blocks(title="Image Processing Toolbox") as app:
             outputs=[rmbg_status],
         ).then(
             fn=rmbg_process,
-            inputs=[rmbg_input, rmbg_model_dir, rmbg_threshold, rmbg_edge, rmbg_whitebg],
+            inputs=[rmbg_input, rmbg_model_dir],
+            # inputs=[rmbg_input, rmbg_model_dir, rmbg_threshold, rmbg_edge, rmbg_whitebg],
             outputs=[rmbg_output, rmbg_msg_state],
         ).then(
             fn=lambda s: s,
